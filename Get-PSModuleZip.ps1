@@ -11,10 +11,15 @@ function Get-PSModuleZip {
     # --- 1. Save the Module Locally (using /tmp) ---
     $tempModulePath = "/tmp/ModuleUpdate/$PackageName" # Version NOT included
     $tempModulePathWithVersion = "/tmp/ModuleUpdate/$PackageName-$PackageVersion"
+    
+		if (!(Test-Path -Path $tempModulePath)) {
+        New-Item -ItemType Directory -Path $tempModulePath -Force
+    }
+    
     if (!(Test-Path -Path $tempModulePathWithVersion)) {
         New-Item -ItemType Directory -Path $tempModulePathWithVersion -Force
     }
-
+    
     try {
         Save-Module -Name $PackageName -Path $tempModulePathWithVersion -RequiredVersion $PackageVersion -Force -Verbose
 
