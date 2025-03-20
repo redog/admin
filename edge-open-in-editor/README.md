@@ -25,7 +25,7 @@ This browser extension allows you to open selected text in your preferred editor
     Clone the repository:
 
     ```bash
-    git clone [https://github.com/redog/admin/edge-open-in-editor.git](https://github.com/redog/admin/edge-open-in-editor.git) # Replace with your repo
+    git clone https://github.com/redog/admin/edge-open-in-editor.git
     cd edge-open-in-editor-extension
     ```
 
