@@ -27,22 +27,29 @@ def send_native_message(message):
     sys.stdout.flush()
 
 def open_in_editor(text):
-    """Opens the given text in Vim in Alacritty."""
-    terminal = 'alacritty'
-    editor = os.environ.get('EDITOR')
-    if not editor or 'vim' not in editor.lower():
+    """Opens the given text in Vim in Alacritty using a temporary file and deletes the file afterwards."""
+    terminal = 'alacritty'  # Replace with your preferred terminal if different
+    editor = os.environ.get('EDITOR', 'vim')
+    if 'vim' not in editor.lower():
         editor = 'vim'
+    
     try:
         with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt') as tmp_file:
             tmp_file.write(text)
             temp_file_path = tmp_file.name
 
-        vim_command = [terminal, '-e', editor, temp_file_path]
-        process = subprocess.Popen(vim_command)
-        process.wait()
-        return f"Text opened in {editor} via {terminal}."
+        try:
+            vim_command = [terminal, '-e', editor, temp_file_path]
+            process = subprocess.Popen(vim_command)
+            process.wait()
+        finally:
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+
+        return f"Text has been opened in {editor} via {terminal}."
+
     except Exception as e:
-        return f"Error opening Vim in terminal: {str(e)}"
+        return f"Error opening editor: {str(e)}"
 
 def main():
     try:
