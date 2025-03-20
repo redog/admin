@@ -1,0 +1,10 @@
+{
+  "name": "com.automationwise.openineditor", // This must match the name in the extension's code
+  "description": "Opens selected text in an editor.",
+  "path": "/home/eric/src/awise/files/src/edge-open-in-editor/open_in_editor.py", // **CHANGE THIS TO THE ACTUAL PATH**
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://jbbkmfcgebgjijifejgjdmjljhehlada/" // **CHANGE THIS**
+  ]
+}
+
