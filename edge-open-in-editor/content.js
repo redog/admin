@@ -9,8 +9,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const range = selection.getRangeAt(0);
         const container = document.createElement('div');
         container.appendChild(range.cloneContents());
-
-        // Use innerText to preserve new lines and tabs
         const text = container.innerText;
         sendResponse({ text: text });
     }

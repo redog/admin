@@ -34,8 +34,5 @@
       "32": "icons/icon32.png"
     },
     "default_title": "Open in Editor"
-    /* Uncomment and configure if using a popup
-    "default_popup": "popup.html"
-    */
   }
 }
