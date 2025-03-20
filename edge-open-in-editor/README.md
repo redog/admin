@@ -26,7 +26,7 @@ This browser extension allows you to open selected text in your preferred editor
 
     ```bash
     git clone https://github.com/redog/admin/edge-open-in-editor.git
-    cd edge-open-in-editor-extension
+    cd edge-open-in-editor
     ```
 
     Copy the Python script:
@@ -41,7 +41,7 @@ This browser extension allows you to open selected text in your preferred editor
 
 2.  **Configure the Native Application Manifest**
 
-    Copy the manifest file (`com.automationwise.openineditor.json`) from the `extension-repo/NativeMessagingHosts` directory to the appropriate directory for your browser:
+    Copy the manifest file (`com.automationwise.openineditor.json`) from the `edge-open-in-editor/NativeMessagingHosts` directory to the appropriate directory for your browser:
 
     -   `~/.config/google-chrome/NativeMessagingHosts/`
     -   `~/.config/microsoft-edge/NativeMessagingHosts/`
