@@ -118,6 +118,7 @@ Repeat these steps for each Notion database you want to integrate.
 
 ## Current Limitations
 
+* **Updates** barely work. Even simple updates right now can wipe out a row.
 * **Single DB Flask API:** The `flask_api_generator.py` script currently only serves one database per running instance. To interact with different databases via `aichat`, you need to stop and restart the Flask API, selecting the appropriate database each time.
 * **Complex `run` Function:** The generated common tool uses a single `run` function with many optional parameters. You may need to be quite specific in your `aichat` prompts to ensure the LLM extracts the correct `action` and parameters.
 * **`argc build` Sensitivity:** The `argc build` process has shown sensitivity to Python type hints and environment issues. Ensure it completes successfully during integration.
