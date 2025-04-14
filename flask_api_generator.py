@@ -1,6 +1,7 @@
 # flask_api_generator.py
 # Runs Flask API for one selected Notion DB. Fetches schema directly.
 import os
+import re
 import sys
 import json
 import argparse # Keep for port argument
