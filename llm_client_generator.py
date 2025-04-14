@@ -23,48 +23,85 @@ except Exception as e:
     exit(1)
 
 # --- DB Fetch/Select Functions ---
-# [Functions: fetch_databases, display_databases_and_get_choice, get_database_properties]
-# (Same as previous versions - code omitted for brevity)
 def fetch_databases():
     """Fetches accessible databases from Notion."""
     print(" * Fetching accessible databases from Notion...", file=sys.stderr)
-    try: # Simplified for brevity
-        response = notion.search(filter={"property": "object", "value": "database"}, page_size=100)
+    try:
+        # Use pagination to fetch all databases if there are more than 100
         all_databases = []
-        for db in response.get("results", []):
-             if db.get("object") == "database" and db.get("title"):
-                 title_list = db.get("title", [])
-                 if title_list:
-                     db_name = title_list[0].get("plain_text", "Untitled")
-                     db_id = db.get("id")
-                     if db_id: all_databases.append({"name": db_name, "id": db_id})
+        start_cursor = None
+        while True:
+            response = notion.search(
+                filter={"property": "object", "value": "database"},
+                page_size=100, # Notion API max page size is 100
+                start_cursor=start_cursor
+            )
+            results = response.get("results", [])
+            for db in results:
+                # Ensure it's a database object and has a title
+                if db.get("object") == "database" and db.get("title"):
+                    # Extract the plain text title
+                    title_list = db.get("title", [])
+                    if title_list:
+                        db_name = title_list[0].get("plain_text", "Untitled Database")
+                        db_id = db.get("id")
+                        if db_id: # Ensure ID exists
+                            all_databases.append({"name": db_name, "id": db_id})
+
+            if response.get("has_more"):
+                start_cursor = response.get("next_cursor")
+            else:
+                break # Exit loop if no more pages
+
         print(f" * Found {len(all_databases)} databases.", file=sys.stderr)
         return all_databases
-    except Exception as e: print(f"Error fetching databases: {e}", file=sys.stderr); return None
+    except APIResponseError as error:
+         print(f"Error fetching databases from Notion: {error}", file=sys.stderr)
+         return None
+    except Exception as e:
+        # Return None and let the main block handle JSON error output
+        print(f"Error during database fetch: {e}", file=sys.stderr) # Print to stderr
+        return None
 
 def display_databases_and_get_choice(databases):
     """Displays the list of databases and prompts the user for selection."""
-    if not databases: print("Error: No databases found.", file=sys.stderr); return None
-    print("\nSelect a Notion database to generate a tool file for:", file=sys.stderr)
-    for i, db in enumerate(databases): print(f"{i + 1}. {db.get('name')} ({db.get('id')})", file=sys.stderr)
+    if not databases:
+        print("Error: No databases found or accessible.", file=sys.stderr)
+        return None
+
+    # Use stderr for prompts so stdout contains only the generated code
+    print("\nSelect a Notion database to generate a tool file for:", file=sys.stderr) # Updated prompt
+    for i, db in enumerate(databases):
+        print(f"{i + 1}. {db.get('name', 'N/A')} (ID: {db.get('id', 'N/A')})", file=sys.stderr)
+
     while True:
+        # Print the prompt to stderr explicitly
         print("Enter the number: ", end="", file=sys.stderr, flush=True)
         try:
+            # Call input() without a prompt string
             choice = input()
             index = int(choice) - 1
             if 0 <= index < len(databases):
-                 selected_db = databases[index]
-                 print(f" * Generating tool file for: {selected_db.get('name')} ({selected_db.get('id')})", file=sys.stderr)
-                 return selected_db
-            else: print("Invalid selection.", file=sys.stderr)
-        except Exception: print("\nInvalid input.", file=sys.stderr)
-
+                selected_db = databases[index]
+                print(f" * Generating tool file for: {selected_db.get('name')} ({selected_db.get('id')})", file=sys.stderr)
+                return selected_db # Return the full dictionary
+            else:
+                print("Invalid selection. Please enter a number from the list.", file=sys.stderr)
+        except ValueError:
+            print("\nInvalid input. Please enter a number.", file=sys.stderr) # Add newline for clarity after bad input
+        except KeyboardInterrupt:
+            print("\nOperation cancelled by user.", file=sys.stderr)
+            return None
+        except EOFError: # Handle case where input stream is closed unexpectedly
+             print("\nInput stream closed unexpectedly.", file=sys.stderr)
+             return None
 
 def get_database_properties(database_id):
     """Retrieves the full properties schema for a given database ID."""
     print(f" * Retrieving schema for database ID: {database_id}...", file=sys.stderr)
     try:
         database = notion.databases.retrieve(database_id=database_id)
+        # Return the entire 'properties' dictionary
         properties_schema = database.get('properties', {})
         print(" * Schema retrieved successfully.", file=sys.stderr)
         return properties_schema
@@ -72,7 +109,8 @@ def get_database_properties(database_id):
          print(f"Error retrieving schema for DB ID {database_id}: {error}", file=sys.stderr)
          return None
     except Exception as e:
-        print(f"Error retrieving properties for DB ID {database_id}: {e}", file=sys.stderr)
+        # Return None on error, let caller handle JSON output
+        print(f"Error retrieving properties for DB ID {database_id}: {e}", file=sys.stderr) # Print to stderr
         return None
 
 

@@ -153,10 +153,8 @@ def main():
         sys.exit(1)
 
     # --- Update tools.txt ---
-    # --- MODIFICATION ---
     # Add ONLY the filename to tools.txt
     tool_filename_to_add = tool_file
-    # --- END MODIFICATION ---
     if not update_tools_txt(tools_txt_path, tool_filename_to_add):
         print("Error updating tools.txt. Skipping build steps.")
         sys.exit(1)
