@@ -2,3 +2,52 @@
 **/.venv
 **/*.exe
 **/*.intunewin
+
+# Gradle files
+.gradle/
+build/
+*/build/
+!gradle-wrapper.jar
+
+# Local config
+/local.properties
+/.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Android Studio
+.cxx/
+.externalNativeBuild/
+captures/
+outputs/
+.idea/
+*.iml
+
+# Kotlin specific
+*.kotlin_module
+
+# Misc
+*.swp
+*.swo
+
+# Crashlytics / Firebase
+crashlytics-build.properties
+fabric.properties
+
+# ndk-build
+obj/
+
+# Jetpack Compose compiler metrics (optional)
+compose-compiler-metrics/
+compose-compiler-reports/
+
+# Ignore generated sign-in keys (if any)
+*.jks
