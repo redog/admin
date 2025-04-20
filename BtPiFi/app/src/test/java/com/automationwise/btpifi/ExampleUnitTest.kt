@@ -1,4 +1,4 @@
-package com.example.btpifi
+package com.automationwise.btpifi
 
 import org.junit.Test
 
