@@ -1,3 +1,4 @@
+gradle
 *.iml
 .gradle
 /local.properties
@@ -17,3 +18,42 @@ local.properties
 **/package-lock.json
 */package-lock.json
 package-lock.json
+# Android build output
+**/build/
+**/.gradle/
+.gradle/
+.gradle
+/local.properties
+
+# IntelliJ/Android Studio
+.idea/
+*.iml
+
+# OS-specific
+.DS_Store
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# Node.js (if you're mixing with BLE or scripts)
+node_modules/
+**/node_modules/
+**/package-lock.json
+**/package.json
+
+# Kotlin-specific (if needed)
+*.class
+*.jar
+*.war
+*.apk
+*.ap_
+
+# Log files
+*.log
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+

@@ -8,6 +8,13 @@
 build/
 */build/
 !gradle-wrapper.jar
+**/build/
+**/*.iml
+*.log
+*.tmp
+*.swp
+*.bak
+*.class
 
 # Local config
 /local.properties
