@@ -2,4 +2,6 @@
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.android) apply false
+    alias(libs.plugins.jetbrains.compose.compiler) apply false
 }
+val defaultApplicationId by extra("com.automationwise.btpifi")
