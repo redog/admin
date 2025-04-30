@@ -12,7 +12,7 @@ import traceback
 import time # Import the time module for sleep
 
 # --- Configuration ---
-APP_PATH = "/com/example"
+APP_PATH = "/com/automationwise/btpifi"
 SERVICE_PATH = APP_PATH + "/service0"
 # Characteristic Paths
 CHAR_RW_PATH = SERVICE_PATH + "/char0"    # Read/Write Char
@@ -47,7 +47,36 @@ LE_ADVERTISING_MANAGER_IFACE = 'org.bluez.LEAdvertisingManager1'
 LE_ADVERTISEMENT_IFACE = 'org.bluez.LEAdvertisement1'
 
 
-# --- Helper Function for WiFi Scan ---
+# --- Helper Functions ---
+
+def get_dynamic_device_name(interface: str, default_name: str) -> str:
+    """
+    Generates a device name like 'BtPiFi-XXXX' using the last 2 bytes
+    of the specified network interface's MAC address.
+    Falls back to default_name if the MAC cannot be read.
+    """
+    mac_path = f"/sys/class/net/{interface}/address"
+    try:
+        with open(mac_path, 'r') as f:
+            mac_address = f.readline().strip()
+        # MAC format: aa:bb:cc:dd:ee:ff
+        if len(mac_address) == 17 and mac_address.count(':') == 5:
+            # Remove colons and take last 4 chars (last 2 bytes)
+            mac_suffix = mac_address.replace(":", "")[-4:].upper()
+            device_name = f"BtPiFi-{mac_suffix}"
+            print(f"Using dynamic device name: {device_name} (from {interface} MAC: {mac_address})")
+            return device_name
+        else:
+            print(f"Warning: Could not parse MAC address '{mac_address}' from {mac_path}.")
+    except FileNotFoundError:
+        print(f"Warning: Could not find MAC address file: {mac_path}. Interface '{interface}' down or doesn't exist?")
+    except Exception as e:
+        print(f"Warning: Error reading MAC address from {mac_path}: {e}")
+
+    print(f"Falling back to default device name: {default_name}")
+    return default_name
+
+
 # (run_wifi_scan function remains the same)
 def run_wifi_scan():
     ssids = []
@@ -348,6 +377,8 @@ async def main():
     """
     Main asynchronous function - Added writeable characteristics.
     """
+    #device_name = get_dynamic_device_name(WIFI_INTERFACE, DEFAULT_DEVICE_NAME)
+
     print(f"Starting Direct D-Bus BLE peripheral '{DEVICE_NAME}'...")
     bus = None
     adapter_path = None
