@@ -22,7 +22,7 @@ RETRY_DELAY = 1.0  # seconds between retries
 CHAR_OPERATION_RETRIES = 3  # number of retries for characteristic operations
 CHAR_OPERATION_DELAY = 2.0  # increased delay between characteristic operation retries
 CONNECTION_STABILIZATION_DELAY = 2.0  # seconds to wait after connection
-WIFI_SCAN_WAIT = 13.0  # seconds to wait for WiFi scan to complete
+WIFI_SCAN_WAIT = 12.0  # seconds to wait for WiFi scan to complete
 
 def get_device_info(device):
     """Safely extract device information, handling different formats"""
@@ -187,26 +187,38 @@ async def interact_with_device(device):
         )
         logger.info(f"Initial value: {initial_value}")
         
-        # 2. Trigger WiFi scan
-        await write_characteristic_with_retry(
-            client,
-            CHAR_READ_WRITE_UUID,
-            b'SCAN',
-            "SCAN command to Read/Write characteristic"
-        )
+        # Additional delay after initial read
+        logger.info("Waiting 2 seconds before starting WiFi scan...")
+        await asyncio.sleep(2)
         
-        # Wait for scan to complete
-        logger.info(f"Waiting {WIFI_SCAN_WAIT} seconds for WiFi scan to complete...")
-        await asyncio.sleep(WIFI_SCAN_WAIT)
-        
-        # 3. Read WiFi scan results - only try once since we know the scan is complete
+        # 2. Trigger WiFi scan by reading the scan characteristic
+        logger.info("Triggering WiFi scan...")
         try:
+            # First read triggers the scan
+            logger.info("Triggering scan...")
+            try:
+                value = await client.read_gatt_char(WIFI_SCAN_UUID)
+                logger.info("Scan triggered successfully")
+            except BleakError as e:
+                logger.error(f"Failed to trigger scan: {e}")
+                return
+            
+            # Wait for scan to complete
+            logger.info("Waiting 10 seconds for WiFi scan to complete...")
+            await asyncio.sleep(10)
+            
+            # Now read the results
             logger.info("Reading WiFi scan results...")
-            value = await client.read_gatt_char(WIFI_SCAN_UUID)
-            scan_results = value.decode('utf-8', errors='ignore')
-            logger.info(f"Scan results: {scan_results}")
-        except BleakError as e:
-            logger.error(f"Failed to read scan results: {e}")
+            try:
+                value = await client.read_gatt_char(WIFI_SCAN_UUID)
+                scan_results = value.decode('utf-8', errors='ignore')
+                logger.info(f"Scan results: {scan_results}")
+            except BleakError as e:
+                logger.error(f"Failed to read scan results: {e}")
+                return
+            
+        except Exception as e:
+            logger.error(f"Unexpected error during WiFi scan: {e}")
             return
         
         # 4. Set WiFi credentials
