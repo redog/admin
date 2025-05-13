@@ -116,3 +116,29 @@ function Invoke-AutomationRunbook {
     }
     Write-Host ""
 }
+
+# Example usage for two processes
+# requires Az.Automation
+function Start-Two {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$AParameter
+    )
+
+    Write-Host "Starting two processes with Parameter: $AParameter..." -ForegroundColor Cyan
+    
+    # Step 1: Run the first runbook on a hybrid worker
+    Write-Host "Step 1: Running first process on $HybridRunner..." -ForegroundColor Yellow
+    Invoke-AutomationRunbook -RunbookName "Do-HybridRunbook" -HybridRunner $HybridRunner -Parameters @{
+        "MyRunbookParam" = $AParameter
+    }
+
+    # Step 2: Lock the user account in Azure
+    Write-Host "Step 2: Running process two in Azure..." -ForegroundColor Yellow
+    Invoke-AutomationRunbook -RunbookName "Do-AzureRunbook" -Parameters @{
+        "MyRunbookParam" = $AParameter
+    }
+    Write-Host "Two processes completed." -ForegroundColor Green
+}
+# Connect-AzAccount
+# Start-Two -AParameter "Yeethis"
