@@ -179,21 +179,23 @@ try {
         $OutputName = [System.IO.Path]::GetFileNameWithoutExtension($originalSetupFileName)
         Write-Verbose "OutputName not specified, defaulting to '$OutputName'."
     }
-    # Ensure OutputPath exists if specified and different from PSScriptRoot (PSScriptRoot is assumed valid)
-    if ($OutputPath -ne $PSScriptRoot -and (-not(Test-Path $OutputPath -PathType Container))) {
-         Write-Warning "Specified OutputPath '$OutputPath' does not exist. Attempting to create."
-         if($PSCmdlet.ShouldProcess($OutputPath, "Create Output Directory")) {
-             try {
-                 New-Item -Path $OutputPath -ItemType Directory -Force -ErrorAction Stop | Out-Null
-                 Write-Verbose "Created output directory '$OutputPath'."
-             } catch {
-                 Write-Error "Failed to create output directory '$OutputPath': $($_.Exception.Message)"
-                 Throw # Rethrow to trigger finally cleanup and exit
-             }
-         } else {
+    # Ensure OutputPath exists. This check runs for both default and user-specified paths.
+    if (-not (Test-Path $OutputPath -PathType Container)) {
+        Write-Warning "OutputPath '$OutputPath' does not exist or is not a directory. Attempting to create it."
+        if ($PSCmdlet.ShouldProcess($OutputPath, "Create Output Directory")) {
+            try {
+                New-Item -Path $OutputPath -ItemType Directory -Force -ErrorAction Stop | Out-Null
+                Write-Verbose "Successfully created output directory '$OutputPath'."
+            }
+            catch {
+                Write-Error "Failed to create output directory '$OutputPath'. Error: $($_.Exception.Message)"
+                Throw # Rethrow to trigger finally cleanup and exit
+            }
+        }
+        else {
             Write-Warning "Creation of output directory skipped due to -WhatIf or user cancellation."
-            Throw "Output directory creation skipped." # Throw to trigger finally cleanup and exit
-         }
+            Throw "Cannot proceed without a valid output directory." # Throw to trigger finally cleanup and exit
+        }
     }
 
     $finalIntuneWinFile = Join-Path $OutputPath "$($OutputName).intunewin"
@@ -201,10 +203,10 @@ try {
 
     # --- Run IntuneWinAppUtil.exe ---
     $intuneArgs = @(
-        "-c", "`"$tempSourceDir`"" # Source folder
-        "-s", "`"$originalSetupFileName`"" # Setup file relative to source folder
-        "-o", "`"$tempOutputDir`"" # Output folder for the .intunewin file
-        "-q" # Quiet mode - suppresses tool's console output, relies on exit code
+        "-c", $tempSourceDir,            # Source folder
+        "-s", $originalSetupFileName,    # Setup file relative to source folder
+        "-o", $tempOutputDir,            # Output folder for the .intunewin file
+        "-q"                             # Quiet mode - relies on exit code
     )
 
     $commandString = "& `"$IntuneWinUtilPath`" $($intuneArgs -join ' ')"
