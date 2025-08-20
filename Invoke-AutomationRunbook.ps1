@@ -64,6 +64,13 @@ function Invoke-AutomationRunbook {
     # Display final status
     $statusColor = if ($job.Status -eq "Completed") { "Green" } else { "Red" }
     Write-Host "Runbook finished with status: $($job.Status)" -ForegroundColor $statusColor
+
+    # If the job failed, print the exception
+    if ($job.Status -eq "Failed") {
+        if ($job.Exception) {
+            Write-Host "Runbook Exception: $($job.Exception)" -ForegroundColor Red
+        }
+    }
     Write-Host ""
 
     # Define colors for different output streams
