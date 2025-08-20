@@ -2,17 +2,17 @@ function Invoke-AutomationRunbook {
     param (
         [Parameter(Mandatory=$true)]
         [string]$RunbookName,
-        
+
         [Parameter(Mandatory=$false)]
         [string]$HybridRunner,
-        
+
         [Parameter(Mandatory=$false)]
         [hashtable]$Parameters = @{}
     )
 
     # Variables
-    $AutomationAccountName = ""
-    $RGName = ""
+    $AutomationAccountName = "Automate-1dd430f4-29c2-4702-8e8f-26737150a8eb-EUS"
+    $RGName = "DefaultResourceGroup-EUS"
 
     # Start Runbook
     Write-Host "Starting runbook '$RunbookName'..." -ForegroundColor Cyan
