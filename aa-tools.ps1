@@ -8,14 +8,15 @@
 
   To use, configure the variables in the CONFIGURATION section and dot-source this
   file in your PowerShell session or profile:
-  . C:\path\to\automation_shell_tools.ps1
+  . C:\path\to\aa-tools.ps1
 
 .NOTES
-  Author: Eric Ortego
+  Author: Eric Ortego / Gemini / Jules / Codex
   Version: 1.0
 #>
 
-#requires -Modules Az.Accounts, Az.Automation
+#requires -Modules Az.Accounts, Az.Automation 
+# Mg... etc...
 
 # --- CONFIGURATION ---
 # For persistent use, load these in your $PROFILE script before dot-sourcing this file.
@@ -367,7 +368,8 @@ function Invoke-IntuneDeviceAction {
 #>
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
     param(
-        [Parameter(Mandatory = $true, Position = 0, ValueFromPipelineByPropertyName = $true)]
+        [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [Alias('Id')]
         [string]$DeviceId,
 
         [Parameter(Mandatory = $true, Position = 1)]
@@ -395,6 +397,65 @@ function Invoke-IntuneDeviceAction {
     }
 }
 
+function Get-IntuneDeviceActionStatus {
+    <#
+    .SYNOPSIS
+        Shows the status of recent Intune device actions for a specific device. Aliased as 'lsdevaction'.
+
+    .DESCRIPTION
+        Queries the device object directly to show the status of recent device management actions.
+        Note: This uses the 'beta' Graph API endpoint, as the 'deviceActionResults' property
+        is not available in v1.0.
+
+    .PARAMETER DeviceId
+        The ID of the managed device to check. Can be piped from 'lsdevice'.
+
+    .EXAMPLE
+        PS C:\> lsdevaction -DeviceId 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+        Shows the status of recent actions for the specified device.
+
+    .EXAMPLE
+        PS C:\> lsdevice user@domain.com | Select-Object -First 1 | lsdevaction
+        Gets the first device for a user and shows the last two actions for it.
+#>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [Alias('Id')]
+        [string]$DeviceId
+    )
+    begin {
+        if (-not (Get-MgContext)) {
+            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'DeviceManagementManagedDevices.Read.All'"
+            Connect-MgGraph -Scopes 'DeviceManagementManagedDevices.Read.All' -ErrorAction Stop
+        }
+    }
+    process {
+        try {
+            Write-Host "Fetching action results for device '$($DeviceId)'..." -ForegroundColor Yellow
+            
+            # This information is on the device object itself, in the 'deviceActionResults' property.
+            # This requires using the 'beta' endpoint.
+            $uri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices/$DeviceId`?`$select=deviceName,deviceActionResults"
+            $device = Invoke-MgGraphRequest -Method GET -Uri $uri -ErrorAction Stop
+
+            if ($null -eq $device.deviceActionResults) {
+                Write-Host "No action results found for device ID '$DeviceId'."
+                return
+            }
+
+            # Format the output for readability, sorting by the most recent
+            $device.deviceActionResults |
+                Sort-Object lastUpdatedDateTime -Descending |
+                Select-Object actionName, actionState, lastUpdatedDateTime |
+                Format-Table -AutoSize
+        }
+        catch {
+            Write-Error "An error occurred while fetching device action status: $($_.Exception.Message)"
+        }
+    }
+}
+
 # --- ALIASES ---
 # Common, short aliases for quick command line use.
 Set-Alias -Name lsrb -Value Get-AutomationRunbookInfo
@@ -402,5 +463,6 @@ Set-Alias -Name runrb -Value Invoke-AutomationRunbook
 Set-Alias -Name lsdevice -Value Get-IntuneUserDevice
 Set-Alias -Name invdevice -Value Invoke-IntuneDeviceAction
 Set-Alias -Name lsdevices -Value Get-UserDevices
+Set-Alias -Name lsdevaction -Value Get-IntuneDeviceActionStatus
 Write-Host "Automation Shell tools loaded. Use 'lsrb' and 'runrb'." -ForegroundColor DarkCyan
 
