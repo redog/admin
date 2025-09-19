@@ -651,6 +651,130 @@ function Remove-UserFromGroup {
 }
 
 
+function Get-AutopilotDevice {
+    <#
+    .SYNOPSIS
+        Lists all registered Windows Autopilot devices. Aliased as 'lsap'.
+
+    .DESCRIPTION
+        Queries Microsoft Graph to get a list of all devices registered with the
+        Windows Autopilot service, showing their serial number, assigned user, and group tag.
+
+    .EXAMPLE
+        PS C:\> lsap
+        Lists all Autopilot devices in the tenant.
+#>
+    [CmdletBinding()]
+    param()
+    begin {
+        if (-not (Get-MgContext)) {
+            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.Read.All'"
+            Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.Read.All' -ErrorAction Stop
+        }
+    }
+    process {
+        try {
+            Write-Host "Fetching all Autopilot device identities..." -ForegroundColor Yellow
+            $devices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity -All -ErrorAction Stop
+            if ($null -eq $devices) {
+                Write-Host "No Autopilot devices found."
+                return
+            }
+            $devices | Select-Object Id, GroupTag, SerialNumber, UserPrincipalName | Format-Table -AutoSize
+        }
+        catch {
+            Write-Error "An error occurred while fetching Autopilot devices: $($_.Exception.Message)"
+        }
+    }
+}
+
+function Set-AutopilotDeviceUser {
+    <#
+    .SYNOPSIS
+        Assigns a user to an Autopilot device. Aliased as 'assignap'.
+
+    .DESCRIPTION
+        Assigns a primary user to a specific Autopilot device record using the device's ID.
+
+    .PARAMETER DeviceId
+        The ID of the Autopilot device. You can get this from 'lsap'.
+
+    .PARAMETER UserPrincipalName
+        The User Principal Name (email address) of the user to assign.
+
+    .EXAMPLE
+        PS C:\> assignap -DeviceId 'ztd-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -UserPrincipalName "user@domain.com"
+#>
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true, Position = 0, ValueFromPipelineByPropertyName = $true)]
+        [Alias('Id')]
+        [string]$DeviceId,
+
+        [Parameter(Mandatory = $true, Position = 1)]
+        [string]$UserPrincipalName
+    )
+    begin {
+        if (-not (Get-MgContext)) {
+            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.ReadWrite.All'"
+            Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -ErrorAction Stop
+        }
+    }
+    process {
+        if ($PSCmdlet.ShouldProcess("device ID '$($DeviceId)'", "Assign user '$($UserPrincipalName)'")) {
+            try {
+                Write-Host "Assigning user '$($UserPrincipalName)' to device '$($DeviceId)'..." -ForegroundColor Yellow
+                Update-MgDeviceManagementWindowsAutopilotDeviceIdentity -WindowsAutopilotDeviceIdentityId $DeviceId -UserPrincipalName $UserPrincipalName -ErrorAction Stop
+                Write-Host "Successfully assigned user." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to assign user: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+function Remove-AutopilotDeviceUser {
+    <#
+    .SYNOPSIS
+        Removes the assigned user from an Autopilot device. Aliased as 'remap'.
+
+    .DESCRIPTION
+        Removes the primary user assignment from a specific Autopilot device record.
+
+    .PARAMETER DeviceId
+        The ID of the Autopilot device. You can get this from 'lsap'.
+
+    .EXAMPLE
+        PS C:\> remap 'ztd-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+#>
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+    param(
+        [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [Alias('Id')]
+        [string]$DeviceId
+    )
+    begin {
+        if (-not (Get-MgContext)) {
+            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.ReadWrite.All'"
+            Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -ErrorAction Stop
+        }
+    }
+    process {
+         if ($PSCmdlet.ShouldProcess("device ID '$($DeviceId)'", "Remove assigned user")) {
+            try {
+                Write-Host "Removing assigned user from device '$($DeviceId)'..." -ForegroundColor Yellow
+                # Setting the UPN to an empty string unassigns the user.
+                Update-MgDeviceManagementWindowsAutopilotDeviceIdentity -WindowsAutopilotDeviceIdentityId $DeviceId -UserPrincipalName "" -ErrorAction Stop
+                Write-Host "Successfully removed user assignment." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to remove user assignment: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
 # --- ALIASES ---
 # Common, short aliases for quick command line use.
 Set-Alias -Name lsrb -Value Get-AutomationRunbookInfo
@@ -662,5 +786,8 @@ Set-Alias -Name lsdevice -Value Get-IntuneUserDevice
 Set-Alias -Name invdevice -Value Invoke-IntuneDeviceAction
 Set-Alias -Name lsdevices -Value Get-UserDevices
 Set-Alias -Name lsdevaction -Value Get-IntuneDeviceActionStatus
+Set-Alias -Name lsap -Value Get-AutopilotDevice
+Set-Alias -Name assignap -Value Set-AutopilotDeviceUser
+Set-Alias -Name remap -Value Remove-AutopilotDeviceUser
 Write-Host "Automation Shell tools loaded. Use 'lsrb' and 'runrb'." -ForegroundColor DarkCyan
 
