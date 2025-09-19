@@ -687,7 +687,6 @@ function Get-AutopilotDevice {
         }
     }
 }
-
 function Set-AutopilotDeviceUser {
     <#
     .SYNOPSIS
@@ -724,7 +723,9 @@ function Set-AutopilotDeviceUser {
         if ($PSCmdlet.ShouldProcess("device ID '$($DeviceId)'", "Assign user '$($UserPrincipalName)'")) {
             try {
                 Write-Host "Assigning user '$($UserPrincipalName)' to device '$($DeviceId)'..." -ForegroundColor Yellow
-                Update-MgDeviceManagementWindowsAutopilotDeviceIdentity -WindowsAutopilotDeviceIdentityId $DeviceId -UserPrincipalName $UserPrincipalName -ErrorAction Stop
+                $uri = "https://graph.microsoft.com/v1.0/deviceManagement/windowsAutopilotDeviceIdentities/$DeviceId/assignUserToDevice"
+                $body = @{ userPrincipalName = $UserPrincipalName } | ConvertTo-Json
+                Invoke-MgGraphRequest -Method POST -Uri $uri -Body $body -ErrorAction Stop
                 Write-Host "Successfully assigned user." -ForegroundColor Green
             }
             catch {
@@ -764,8 +765,8 @@ function Remove-AutopilotDeviceUser {
          if ($PSCmdlet.ShouldProcess("device ID '$($DeviceId)'", "Remove assigned user")) {
             try {
                 Write-Host "Removing assigned user from device '$($DeviceId)'..." -ForegroundColor Yellow
-                # Setting the UPN to an empty string unassigns the user.
-                Update-MgDeviceManagementWindowsAutopilotDeviceIdentity -WindowsAutopilotDeviceIdentityId $DeviceId -UserPrincipalName "" -ErrorAction Stop
+                $uri = "https://graph.microsoft.com/v1.0/deviceManagement/windowsAutopilotDeviceIdentities/$DeviceId/unassignUserFromDevice"
+                Invoke-MgGraphRequest -Method POST -Uri $uri -ErrorAction Stop
                 Write-Host "Successfully removed user assignment." -ForegroundColor Green
             }
             catch {
