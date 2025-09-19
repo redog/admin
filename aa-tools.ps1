@@ -337,7 +337,7 @@ function Get-IntuneUserDevice {
                 Write-Host "No Intune-managed devices found for this user."
                 return
             }
-            $devices | Select-Object DeviceName, Id, OperatingSystem, ComplianceState, ManagedDeviceOwnerType | Format-Table -AutoSize
+            $devices | Select-Object DeviceName, Id, OperatingSystem, ComplianceState, ManagedDeviceOwnerType
         }
         catch {
             Write-Error "Could not retrieve devices for '$($UserPrincipalName)': $($_.Exception.Message)"
@@ -491,7 +491,7 @@ function Get-UserGroupMembership {
                 Write-Host "User is not a member of any groups."
                 return
             }
-            $groups | Select-Object DisplayName, Id, Description | Format-Table -AutoSize
+            $groups | Select-Object DisplayName, Id, Description
         }
         catch {
             Write-Error "An error occurred while fetching groups for '$($UserPrincipalName)': $($_.Exception.Message)"
@@ -680,7 +680,7 @@ function Get-AutopilotDevice {
                 Write-Host "No Autopilot devices found."
                 return
             }
-            $devices | Select-Object Id, GroupTag, SerialNumber, UserPrincipalName | Format-Table -AutoSize
+            $devices | Select-Object Id, GroupTag, SerialNumber, UserPrincipalName
         }
         catch {
             Write-Error "An error occurred while fetching Autopilot devices: $($_.Exception.Message)"
@@ -788,6 +788,6 @@ Set-Alias -Name lsdevices -Value Get-UserDevices
 Set-Alias -Name lsdevaction -Value Get-IntuneDeviceActionStatus
 Set-Alias -Name lsap -Value Get-AutopilotDevice
 Set-Alias -Name assignap -Value Set-AutopilotDeviceUser
-Set-Alias -Name remap -Value Remove-AutopilotDeviceUser
+Set-Alias -Name rmap -Value Remove-AutopilotDeviceUser
 Write-Host "Automation Shell tools loaded. Use 'lsrb' and 'runrb'." -ForegroundColor DarkCyan
 
