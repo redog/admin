@@ -469,6 +469,8 @@ function Get-UserGroupMembership {
 
     .EXAMPLE
         PS C:\> lsgrp "user@domain.com"
+    .TODO
+       Not listing names and other properties properly
 #>
     [CmdletBinding()]
     param(
