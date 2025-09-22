@@ -25,6 +25,70 @@
 # --- END CONFIGURATION ---
 
 
+function Ensure-AzAutomationContext {
+    param (
+        [switch]$AutoConnect
+    )
+
+    $context = Get-AzContext -ErrorAction SilentlyContinue
+    if ($null -ne $context) {
+        return $true
+    }
+
+    Write-Warning "No active Azure context. Run Connect-AzAccount."
+
+    if (-not $AutoConnect.IsPresent) {
+        return $false
+    }
+
+    try {
+        Connect-AzAccount -ErrorAction Stop | Out-Null
+        return $true
+    }
+    catch {
+        throw
+    }
+}
+
+function Ensure-MgGraphContext {
+    param (
+        [string[]]$Scopes,
+        [switch]$AutoConnect
+    )
+
+    $context = Get-MgContext -ErrorAction SilentlyContinue
+    if ($null -ne $context) {
+        return $true
+    }
+
+    if ($Scopes -and $Scopes.Count -gt 0) {
+        $scopeList = ($Scopes | ForEach-Object { "'$_'" }) -join ", "
+        Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes $scopeList"
+    }
+    else {
+        Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph to authenticate."
+    }
+
+    if (-not $AutoConnect.IsPresent) {
+        return $false
+    }
+
+    try {
+        if ($Scopes -and $Scopes.Count -gt 0) {
+            Connect-MgGraph -Scopes $Scopes -ErrorAction Stop | Out-Null
+        }
+        else {
+            Connect-MgGraph -ErrorAction Stop | Out-Null
+        }
+
+        return $true
+    }
+    catch {
+        throw
+    }
+}
+
+
 function Get-AutomationRunbookInfo {
     <#
     .SYNOPSIS
@@ -32,7 +96,8 @@ function Get-AutomationRunbookInfo {
 
     .DESCRIPTION
         Provides a quick way to list all runbooks in the configured Automation Account
-        or inspect the parameters of a specific runbook.
+        or inspect the parameters of a specific runbook. Emits raw objects suitable for
+        further pipeline processing; use -Verbose to surface status messaging.
 
     .PARAMETER Name
         The name of a specific runbook to inspect.
@@ -63,9 +128,8 @@ function Get-AutomationRunbookInfo {
 
     begin {
         # Check for Azure connection
-        if (-not (Get-AzContext)) {
-            Write-Warning "No active Azure context. Run Connect-AzAccount."
-            Connect-AzAccount -ErrorAction Stop
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
         }
         # Check if config is set
         if ([string]::IsNullOrWhiteSpace($Script:AutomationAccountName) -or $Script:AutomationAccountName -eq "YourAutomationAccountName") {
@@ -83,10 +147,10 @@ function Get-AutomationRunbookInfo {
             }
             elseif ($Parameters.IsPresent) {
                 # Display parameters for a specific runbook
-                Write-Host "Parameters for '$($Name)':" -ForegroundColor Cyan
-                $runbook = Get-AzAutomationRunbook -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -Name $Name
+                Write-Verbose "Retrieving parameters for runbook '$Name'."
+                $runbook = Get-AzAutomationRunbook -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -Name $Name -ErrorAction Stop
                 if ($runbook.Parameters.Count -eq 0) {
-                    Write-Host "  No parameters found."
+                    Write-Verbose "No parameters found for runbook '$Name'."
                 }
                 else {
                     $runbook.Parameters.GetEnumerator() | ForEach-Object {
@@ -96,7 +160,7 @@ function Get-AutomationRunbookInfo {
                             Mandatory   = $_.Value.IsMandatory
                             Default     = $_.Value.DefaultValue
                         }
-                    } | Format-Table -AutoSize
+                    } | Write-Output
                 }
             }
             else {
@@ -122,9 +186,18 @@ function Invoke-AutomationRunbook {
         [hashtable]$Parameters = @{}
     )
 
-    # Variables
-    $AutomationAccountName = "Automate-1dd430f4-29c2-4702-8e8f-26737150a8eb-EUS"
-    $RGName = "DefaultResourceGroup-EUS"
+    if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Script:AutomationAccountName) -or
+        $Script:AutomationAccountName -eq "YourAutomationAccountName" -or
+        [string]::IsNullOrWhiteSpace($Script:AutomationResourceGroupName)) {
+        throw "Configuration needed. Please set `$Script:AutomationAccountName and `$Script:AutomationResourceGroupName in the script file."
+    }
+
+    $AutomationAccountName = $Script:AutomationAccountName
+    $RGName = $Script:AutomationResourceGroupName
 
     # Start Runbook
     Write-Host "Starting runbook '$RunbookName'..." -ForegroundColor Cyan
@@ -236,6 +309,114 @@ function Invoke-AutomationRunbook {
     Write-Host ""
 }
 
+function Get-AutomationRunbookJobHistory {
+    <#
+    .SYNOPSIS
+        Retrieves recent automation job executions for inspection or follow-up actions.
+
+    .DESCRIPTION
+        Wraps Get-AzAutomationJob using the configured Automation Account context and emits
+        lightweight objects focused on job identity, status, and timing. Accepts optional filters
+        for runbook name, job status, and start/end time window to keep results targeted and
+        pipeline-friendly.
+
+    .PARAMETER RunbookName
+        Filters the job history to a specific runbook.
+
+    .PARAMETER Status
+        Filters jobs by their last known status (e.g. Completed, Failed, Suspended).
+
+    .PARAMETER StartTime
+        Ignores jobs that started before this timestamp.
+
+    .PARAMETER EndTime
+        Ignores jobs that started after this timestamp.
+
+    .EXAMPLE
+        PS C:\> Get-AutomationRunbookJobHistory -RunbookName "Restart-Service" -Status Failed -StartTime (Get-Date).AddDays(-7)
+        Returns failed jobs for the specified runbook in the last week.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [Alias('Name')]
+        [string]$RunbookName,
+
+        [Parameter()]
+        [string]$Status,
+
+        [Parameter()]
+        [datetime]$StartTime,
+
+        [Parameter()]
+        [datetime]$EndTime
+    )
+
+    begin {
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
+        }
+
+        if ([string]::IsNullOrWhiteSpace($Script:AutomationAccountName) -or
+            $Script:AutomationAccountName -eq "YourAutomationAccountName" -or
+            [string]::IsNullOrWhiteSpace($Script:AutomationResourceGroupName)) {
+            Write-Error "Configuration needed. Please set `$Script:AutomationAccountName and `$Script:AutomationResourceGroupName in the script file."
+            return
+        }
+    }
+
+    process {
+        $queryParams = @{
+            ResourceGroupName      = $Script:AutomationResourceGroupName
+            AutomationAccountName  = $Script:AutomationAccountName
+            ErrorAction            = 'Stop'
+        }
+
+        if ($PSBoundParameters.ContainsKey('RunbookName')) {
+            $queryParams['RunbookName'] = $RunbookName
+            Write-Verbose "Filtering jobs for runbook '$RunbookName'."
+        }
+
+        if ($PSBoundParameters.ContainsKey('Status')) {
+            $queryParams['Status'] = $Status
+            Write-Verbose "Filtering jobs with status '$Status'."
+        }
+
+        if ($PSBoundParameters.ContainsKey('StartTime')) {
+            $queryParams['StartTime'] = $StartTime
+            Write-Verbose "Including jobs starting after $StartTime."
+        }
+
+        if ($PSBoundParameters.ContainsKey('EndTime')) {
+            $queryParams['EndTime'] = $EndTime
+            Write-Verbose "Including jobs starting before $EndTime."
+        }
+
+        try {
+            $jobs = Get-AzAutomationJob @queryParams
+        }
+        catch {
+            Write-Error "Failed to retrieve automation jobs: $($_.Exception.Message)"
+            return
+        }
+
+        if (-not $jobs) {
+            Write-Verbose "No automation jobs matched the provided filters."
+            return
+        }
+
+        $jobs | ForEach-Object {
+            [PSCustomObject]@{
+                JobId       = $_.JobId
+                RunbookName = $_.RunbookName
+                Status      = $_.Status
+                StartTime   = $_.StartTime
+                EndTime     = $_.EndTime
+            }
+        } | Write-Output
+    }
+}
+
 function Get-UserDevices {
     [CmdletBinding()]
     param (
@@ -268,7 +449,7 @@ function Get-UserDevices {
                 # Retrieve managed devices for the specified user
                 $devices = Get-MgUserManagedDevice -UserId $user.Id -Property $selectProperties -ErrorAction Stop -All
                 if ($null -eq $devices -or $devices.Count -eq 0) {
-                    Write-Host "No managed devices found for $UserPrincipalName."
+                    Write-Verbose "No managed devices found for $UserPrincipalName."
                     return
                 }
             }
@@ -277,14 +458,13 @@ function Get-UserDevices {
                 # Retrieve all managed devices
                 $devices = Get-MgDeviceManagementManagedDevice -Property $selectProperties -ErrorAction Stop -All
                 if ($null -eq $devices -or $devices.Count -eq 0) {
-                    Write-Host "No managed devices found in the tenant."
+                    Write-Verbose "No managed devices found in the tenant."
                     return
                 }
             }
 
-            $output = @()
-            foreach ($device in $devices) {
-                $output += [PSCustomObject]@{
+            $output = foreach ($device in $devices) {
+                [PSCustomObject]@{
                     UserPrincipalName = if (-not [string]::IsNullOrWhiteSpace($UserPrincipalName)) { $UserPrincipalName } else { $device.UserPrincipalName }
                     DeviceName        = $device.DeviceName
                     SerialNumber      = $device.SerialNumber
@@ -293,7 +473,7 @@ function Get-UserDevices {
                 }
             }
 
-            return $output | Select-Object UserPrincipalName, DeviceName, SerialNumber, Brand, Model
+            $output | Select-Object UserPrincipalName, DeviceName, SerialNumber, Brand, Model | Write-Output
 
         }
         catch {
@@ -311,6 +491,7 @@ function Get-IntuneUserDevice {
     .DESCRIPTION
         Queries Microsoft Graph to find all devices enrolled in Intune for a given user.
         The output includes the device ID, which is required for other device actions.
+        Emits raw device objects; use -Verbose to view status messages.
 
     .PARAMETER UserPrincipalName
         The User Principal Name (email address) of the user to query.
@@ -324,20 +505,19 @@ function Get-IntuneUserDevice {
         [string]$UserPrincipalName
     )
     begin {
-        if (-not (Get-MgContext)) {
-            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'DeviceManagementManagedDevices.Read.All'"
-            Connect-MgGraph -Scopes 'DeviceManagementManagedDevices.Read.All' -ErrorAction Stop
+        if (-not (Ensure-MgGraphContext -Scopes 'DeviceManagementManagedDevices.Read.All' -AutoConnect)) {
+            return
         }
     }
     process {
         try {
-            Write-Host "Finding Intune devices for '$($UserPrincipalName)'..." -ForegroundColor Yellow
+            Write-Verbose "Finding Intune devices for '$UserPrincipalName'."
             $devices = Get-MgDeviceManagementManagedDevice -Filter "userPrincipalName eq '$($UserPrincipalName)'" -ErrorAction Stop
             if ($null -eq $devices) {
-                Write-Host "No Intune-managed devices found for this user."
+                Write-Verbose "No Intune-managed devices found for '$UserPrincipalName'."
                 return
             }
-            $devices | Select-Object DeviceName, Id, OperatingSystem, ComplianceState, ManagedDeviceOwnerType
+            $devices | Select-Object DeviceName, Id, OperatingSystem, ComplianceState, ManagedDeviceOwnerType | Write-Output
         }
         catch {
             Write-Error "Could not retrieve devices for '$($UserPrincipalName)': $($_.Exception.Message)"
@@ -377,9 +557,8 @@ function Invoke-IntuneDeviceAction {
         [string]$ActionName
     )
     begin {
-        if (-not (Get-MgContext)) {
-            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'DeviceManagementManagedDevices.ReadWrite.All'"
-            Connect-MgGraph -Scopes 'DeviceManagementManagedDevices.ReadWrite.All' -ErrorAction Stop
+        if (-not (Ensure-MgGraphContext -Scopes 'DeviceManagementManagedDevices.ReadWrite.All' -AutoConnect)) {
+            return
         }
     }
     process {
@@ -405,7 +584,7 @@ function Get-IntuneDeviceActionStatus {
     .DESCRIPTION
         Queries the device object directly to show the status of recent device management actions.
         Note: This uses the 'beta' Graph API endpoint, as the 'deviceActionResults' property
-        is not available in v1.0.
+        is not available in v1.0. Outputs raw action result objects; use -Verbose for status updates.
 
     .PARAMETER DeviceId
         The ID of the managed device to check. Can be piped from 'lsdevice'.
@@ -425,14 +604,13 @@ function Get-IntuneDeviceActionStatus {
         [string]$DeviceId
     )
     begin {
-        if (-not (Get-MgContext)) {
-            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'DeviceManagementManagedDevices.Read.All'"
-            Connect-MgGraph -Scopes 'DeviceManagementManagedDevices.Read.All' -ErrorAction Stop
+        if (-not (Ensure-MgGraphContext -Scopes 'DeviceManagementManagedDevices.Read.All' -AutoConnect)) {
+            return
         }
     }
     process {
         try {
-            Write-Host "Fetching action results for device '$($DeviceId)'..." -ForegroundColor Yellow
+            Write-Verbose "Fetching action results for device '$DeviceId'."
 
             # This information is on the device object itself, in the 'deviceActionResults' property.
             # This requires using the 'beta' endpoint.
@@ -440,7 +618,7 @@ function Get-IntuneDeviceActionStatus {
             $device = Invoke-MgGraphRequest -Method GET -Uri $uri -ErrorAction Stop
 
             if ($null -eq $device.deviceActionResults) {
-                Write-Host "No action results found for device ID '$DeviceId'."
+                Write-Verbose "No action results found for device ID '$DeviceId'."
                 return
             }
 
@@ -448,7 +626,7 @@ function Get-IntuneDeviceActionStatus {
             $device.deviceActionResults |
                 Sort-Object lastUpdatedDateTime -Descending |
                 Select-Object actionName, actionState, lastUpdatedDateTime |
-                Format-Table -AutoSize
+                Write-Output
         }
         catch {
             Write-Error "An error occurred while fetching device action status: $($_.Exception.Message)"
@@ -463,6 +641,7 @@ function Get-UserGroupMembership {
 
     .DESCRIPTION
         Queries Microsoft Graph to find all groups a user is a member of.
+        Emits raw group membership objects; use -Verbose for progress details.
 
     .PARAMETER UserPrincipalName
         The User Principal Name (email address) of the user to query.
@@ -478,20 +657,19 @@ function Get-UserGroupMembership {
         [string]$UserPrincipalName
     )
     begin {
-        if (-not (Get-MgContext)) {
-            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'User.Read.All', 'GroupMember.Read.All'"
-            Connect-MgGraph -Scopes 'User.Read.All', 'GroupMember.Read.All' -ErrorAction Stop
+        if (-not (Ensure-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.Read.All' -AutoConnect)) {
+            return
         }
     }
     process {
         try {
-            Write-Host "Fetching group memberships for '$($UserPrincipalName)'..." -ForegroundColor Yellow
+            Write-Verbose "Fetching group memberships for '$UserPrincipalName'."
             $groups = Get-MgUserMemberOf -UserId $UserPrincipalName -ErrorAction Stop
             if ($null -eq $groups) {
-                Write-Host "User is not a member of any groups."
+                Write-Verbose "User '$UserPrincipalName' is not a member of any groups."
                 return
             }
-            $groups | Select-Object DisplayName, Id, Description
+            $groups | Select-Object DisplayName, Id, Description | Write-Output
         }
         catch {
             Write-Error "An error occurred while fetching groups for '$($UserPrincipalName)': $($_.Exception.Message)"
@@ -525,9 +703,8 @@ function Add-UserToGroup {
         [string]$GroupIdentifier
     )
     begin {
-        if (-not (Get-MgContext)) {
-            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'User.Read.All', 'GroupMember.ReadWrite.All'"
-            Connect-MgGraph -Scopes 'User.Read.All', 'GroupMember.ReadWrite.All' -ErrorAction Stop
+        if (-not (Ensure-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.ReadWrite.All' -AutoConnect)) {
+            return
         }
     }
     process {
@@ -598,9 +775,8 @@ function Remove-UserFromGroup {
         [string]$GroupIdentifier
     )
     begin {
-        if (-not (Get-MgContext)) {
-            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'User.Read.All', 'GroupMember.ReadWrite.All'"
-            Connect-MgGraph -Scopes 'User.Read.All', 'GroupMember.ReadWrite.All' -ErrorAction Stop
+        if (-not (Ensure-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.ReadWrite.All' -AutoConnect)) {
+            return
         }
     }
     process {
@@ -659,6 +835,7 @@ function Get-AutopilotDevice {
     .DESCRIPTION
         Queries Microsoft Graph to get a list of all devices registered with the
         Windows Autopilot service, showing their serial number, assigned user, and group tag.
+        Outputs raw device identity objects; enable -Verbose for progress information.
 
     .EXAMPLE
         PS C:\> lsap
@@ -667,20 +844,19 @@ function Get-AutopilotDevice {
     [CmdletBinding()]
     param()
     begin {
-        if (-not (Get-MgContext)) {
-            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.Read.All'"
-            Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.Read.All' -ErrorAction Stop
+        if (-not (Ensure-MgGraphContext -Scopes 'DeviceManagementServiceConfig.Read.All' -AutoConnect)) {
+            return
         }
     }
     process {
         try {
-            Write-Host "Fetching all Autopilot device identities..." -ForegroundColor Yellow
+            Write-Verbose "Fetching all Autopilot device identities."
             $devices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity -All -ErrorAction Stop
             if ($null -eq $devices) {
-                Write-Host "No Autopilot devices found."
+                Write-Verbose "No Autopilot devices found."
                 return
             }
-            $devices | Select-Object Id, GroupTag, SerialNumber, UserPrincipalName
+            $devices | Select-Object Id, GroupTag, SerialNumber, UserPrincipalName | Write-Output
         }
         catch {
             Write-Error "An error occurred while fetching Autopilot devices: $($_.Exception.Message)"
@@ -714,9 +890,8 @@ function Set-AutopilotDeviceUser {
         [string]$UserPrincipalName
     )
     begin {
-        if (-not (Get-MgContext)) {
-            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.ReadWrite.All'"
-            Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -ErrorAction Stop
+        if (-not (Ensure-MgGraphContext -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -AutoConnect)) {
+            return
         }
     }
     process {
@@ -756,9 +931,8 @@ function Remove-AutopilotDeviceUser {
         [string]$DeviceId
     )
     begin {
-        if (-not (Get-MgContext)) {
-            Write-Warning "No active Microsoft Graph context. Run Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.ReadWrite.All'"
-            Connect-MgGraph -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -ErrorAction Stop
+        if (-not (Ensure-MgGraphContext -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -AutoConnect)) {
+            return
         }
     }
     process {
@@ -783,6 +957,7 @@ function Get-AutomationWebhook {
 
     .DESCRIPTION
         Retrieves all webhooks associated with a given runbook in the configured Automation Account.
+        Emits webhook objects for further pipeline use; enable -Verbose to view status updates.
 
     .PARAMETER RunbookName
         The name of the runbook to inspect for webhooks.
@@ -796,20 +971,19 @@ function Get-AutomationWebhook {
         [string]$RunbookName
     )
     begin {
-        if (-not (Get-AzContext)) {
-            Write-Warning "No active Azure context. Run Connect-AzAccount."
-            Connect-AzAccount -ErrorAction Stop
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
         }
     }
     process {
         try {
-            Write-Host "Getting webhooks for runbook '$($RunbookName)'..." -ForegroundColor Yellow
+            Write-Verbose "Getting webhooks for runbook '$RunbookName'."
             $webhooks = Get-AzAutomationWebhook -RunbookName $RunbookName -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -ErrorAction Stop
             if ($null -eq $webhooks) {
-                Write-Host "No webhooks found for this runbook."
+                Write-Verbose "No webhooks found for runbook '$RunbookName'."
                 return
             }
-            $webhooks | Select-Object Name, IsEnabled, ExpiryTime, LastModifiedTime
+            $webhooks | Select-Object Name, IsEnabled, ExpiryTime, LastModifiedTime | Write-Output
         }
         catch {
             Write-Error "An error occurred while fetching webhooks: $($_.Exception.Message)"
@@ -862,9 +1036,8 @@ function New-AutomationWebhook {
         [switch]$Disabled
     )
     begin {
-        if (-not (Get-AzContext)) {
-            Write-Warning "No active Azure context. Run Connect-AzAccount."
-            Connect-AzAccount -ErrorAction Stop
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
         }
     }
     process {
@@ -921,9 +1094,8 @@ function Remove-AutomationWebhook {
         [string]$WebhookName
     )
     begin {
-        if (-not (Get-AzContext)) {
-            Write-Warning "No active Azure context. Run Connect-AzAccount."
-            Connect-AzAccount -ErrorAction Stop
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
         }
     }
     process {
@@ -946,6 +1118,7 @@ function Get-AutomationVariable {
 
     .DESCRIPTION
         Retrieves one or all variables from the configured Automation Account.
+        Outputs raw variable metadata objects; use -Verbose for progress details.
 
     .PARAMETER Name
         The name of a specific variable to retrieve.
@@ -964,9 +1137,8 @@ function Get-AutomationVariable {
         [string]$Name
     )
     begin {
-        if (-not (Get-AzContext)) {
-            Write-Warning "No active Azure context. Run Connect-AzAccount."
-            Connect-AzAccount -ErrorAction Stop
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
         }
     }
     process {
@@ -976,18 +1148,18 @@ function Get-AutomationVariable {
                 AutomationAccountName = $Script:AutomationAccountName
             }
             if ($PSBoundParameters.ContainsKey('Name')) {
-                Write-Host "Getting variable '$($Name)'..." -ForegroundColor Yellow
+                Write-Verbose "Getting variable '$Name'."
                 $splat['Name'] = $Name
             } else {
-                Write-Host "Getting all variables..." -ForegroundColor Yellow
+                Write-Verbose "Getting all Automation variables."
             }
 
             $variables = Get-AzAutomationVariable @splat -ErrorAction Stop
             if ($null -eq $variables) {
-                Write-Host "No variables found."
+                Write-Verbose "No variables found."
                 return
             }
-            $variables | Select-Object Name, Description, IsEncrypted, LastModifiedTime
+            $variables | Select-Object Name, Description, IsEncrypted, LastModifiedTime | Write-Output
         }
         catch {
             Write-Error "An error occurred while fetching variables: $($_.Exception.Message)"
@@ -1037,9 +1209,8 @@ function New-AutomationVariable {
         [switch]$Encrypted
     )
     begin {
-        if (-not (Get-AzContext)) {
-            Write-Warning "No active Azure context. Run Connect-AzAccount."
-            Connect-AzAccount -ErrorAction Stop
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
         }
     }
     process {
@@ -1092,9 +1263,8 @@ function Set-AutomationVariable {
         [object]$Value
     )
     begin {
-        if (-not (Get-AzContext)) {
-            Write-Warning "No active Azure context. Run Connect-AzAccount."
-            Connect-AzAccount -ErrorAction Stop
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
         }
     }
     process {
@@ -1130,9 +1300,8 @@ function Remove-AutomationVariable {
         [string]$Name
     )
     begin {
-        if (-not (Get-AzContext)) {
-            Write-Warning "No active Azure context. Run Connect-AzAccount."
-            Connect-AzAccount -ErrorAction Stop
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
         }
     }
     process {
