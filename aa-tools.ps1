@@ -22,6 +22,14 @@
 # For persistent use, load these in your $PROFILE script before dot-sourcing this file.
 #$Script:AutomationAccountName = "Automate-contoso"
 #$Script:AutomationResourceGroupName = "AACRG"
+
+# If the script variables are not set, try to initialize them from the calling scope (e.g., $PROFILE)
+if ($null -ne $AutomationAccountName -and -not $Script:AutomationAccountName) {
+    $Script:AutomationAccountName = $AutomationAccountName
+}
+if ($null -ne $AutomationResourceGroupName -and -not $Script:AutomationResourceGroupName) {
+    $Script:AutomationResourceGroupName = $AutomationResourceGroupName
+}
 # --- END CONFIGURATION ---
 
 
