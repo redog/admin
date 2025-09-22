@@ -690,7 +690,7 @@ function Get-AutopilotDevice {
 function Set-AutopilotDeviceUser {
     <#
     .SYNOPSIS
-        Assigns a user to an Autopilot device. Aliased as 'assignap'.
+        Assigns a user to an Autopilot device. Aliased as 'assignapusr'.
 
     .DESCRIPTION
         Assigns a primary user to a specific Autopilot device record using the device's ID.
@@ -702,7 +702,7 @@ function Set-AutopilotDeviceUser {
         The User Principal Name (email address) of the user to assign.
 
     .EXAMPLE
-        PS C:\> assignap -DeviceId 'ztd-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -UserPrincipalName "user@domain.com"
+        PS C:\> assignapusr -DeviceId 'ztd-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' -UserPrincipalName "user@domain.com"
 #>
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -738,7 +738,7 @@ function Set-AutopilotDeviceUser {
 function Remove-AutopilotDeviceUser {
     <#
     .SYNOPSIS
-        Removes the assigned user from an Autopilot device. Aliased as 'remap'.
+        Removes the assigned user from an Autopilot device. Aliased as 'rmapuser'.
 
     .DESCRIPTION
         Removes the primary user assignment from a specific Autopilot device record.
@@ -747,7 +747,7 @@ function Remove-AutopilotDeviceUser {
         The ID of the Autopilot device. You can get this from 'lsap'.
 
     .EXAMPLE
-        PS C:\> remap 'ztd-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+        PS C:\> rmapuser -DeviceId 'ztd-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 #>
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
     param(
@@ -1171,4 +1171,3 @@ Set-Alias -Name addavar -Value New-AutomationVariable
 Set-Alias -Name setavar -Value Set-AutomationVariable
 Set-Alias -Name remvar -Value Remove-AutomationVariable
 Write-Host "Automation Shell tools loaded. Use 'lsrb' and 'runrb'." -ForegroundColor DarkCyan
-
