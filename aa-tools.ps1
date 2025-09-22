@@ -433,7 +433,7 @@ function Get-IntuneDeviceActionStatus {
     process {
         try {
             Write-Host "Fetching action results for device '$($DeviceId)'..." -ForegroundColor Yellow
-            
+
             # This information is on the device object itself, in the 'deviceActionResults' property.
             # This requires using the 'beta' endpoint.
             $uri = "https://graph.microsoft.com/beta/deviceManagement/managedDevices/$DeviceId`?`$select=deviceName,deviceActionResults"
@@ -630,7 +630,7 @@ function Remove-UserFromGroup {
                     return
                 }
             }
-            
+
             # We need the user's membership ID within the group to remove them
             $membership = Get-MgGroupMember -GroupId $group.Id -Filter "id eq '$($user.Id)'" -ErrorAction Stop
             if (-not $membership) {
@@ -776,6 +776,379 @@ function Remove-AutopilotDeviceUser {
     }
 }
 
+function Get-AutomationWebhook {
+    <#
+    .SYNOPSIS
+        Lists webhooks for a specific runbook. Aliased as 'lswebhook'.
+
+    .DESCRIPTION
+        Retrieves all webhooks associated with a given runbook in the configured Automation Account.
+
+    .PARAMETER RunbookName
+        The name of the runbook to inspect for webhooks.
+
+    .EXAMPLE
+        PS C:\> lswebhook -RunbookName "Restart-Service"
+#>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$RunbookName
+    )
+    begin {
+        if (-not (Get-AzContext)) {
+            Write-Warning "No active Azure context. Run Connect-AzAccount."
+            Connect-AzAccount -ErrorAction Stop
+        }
+    }
+    process {
+        try {
+            Write-Host "Getting webhooks for runbook '$($RunbookName)'..." -ForegroundColor Yellow
+            $webhooks = Get-AzAutomationWebhook -RunbookName $RunbookName -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -ErrorAction Stop
+            if ($null -eq $webhooks) {
+                Write-Host "No webhooks found for this runbook."
+                return
+            }
+            $webhooks | Select-Object Name, IsEnabled, ExpiryTime, LastModifiedTime
+        }
+        catch {
+            Write-Error "An error occurred while fetching webhooks: $($_.Exception.Message)"
+        }
+    }
+}
+
+function New-AutomationWebhook {
+    <#
+    .SYNOPSIS
+        Creates a new webhook for an Automation runbook. Aliased as 'addwebhook'.
+
+    .DESCRIPTION
+        Creates a new webhook, sets its expiration, and immediately returns the webhook URI.
+        The URI is only available at the time of creation and cannot be retrieved later.
+
+    .PARAMETER RunbookName
+        The name of the runbook to attach the webhook to.
+
+    .PARAMETER WebhookName
+        The desired name for the new webhook.
+
+    .PARAMETER ExpiryTime
+        The date and time when the webhook will expire. Defaults to one year from creation.
+
+    .PARAMETER Disabled
+        A switch to create the webhook in a disabled state.
+
+    .EXAMPLE
+        PS C:\> addwebhook "Restart-Service" -WebhookName "ServiceRestartAPI"
+        Creates a new webhook named 'ServiceRestartAPI' that expires in one year.
+
+    .EXAMPLE
+        PS C:\> $expiry = (Get-Date).AddDays(30)
+        PS C:\> addwebhook "MyRunbook" -WebhookName "TempHook" -ExpiryTime $expiry -Disabled
+        Creates a disabled webhook that expires in 30 days.
+#>
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$RunbookName,
+
+        [Parameter(Mandatory = $true, Position = 1)]
+        [string]$WebhookName,
+
+        [Parameter(Mandatory = $false)]
+        [datetime]$ExpiryTime = (Get-Date).AddYears(1),
+
+        [Parameter(Mandatory = $false)]
+        [switch]$Disabled
+    )
+    begin {
+        if (-not (Get-AzContext)) {
+            Write-Warning "No active Azure context. Run Connect-AzAccount."
+            Connect-AzAccount -ErrorAction Stop
+        }
+    }
+    process {
+        if ($PSCmdlet.ShouldProcess("runbook '$($RunbookName)'", "Create webhook '$($WebhookName)'")) {
+            try {
+                $splat = @{
+                    Name                  = $WebhookName
+                    RunbookName           = $RunbookName
+                    IsEnabled             = -not $Disabled.IsPresent
+                    ExpiryTime            = $ExpiryTime
+                    ResourceGroupName     = $Script:AutomationResourceGroupName
+                    AutomationAccountName = $Script:AutomationAccountName
+                }
+                $newWebhook = New-AzAutomationWebhook @splat -ErrorAction Stop
+
+                Write-Host "`n" + ("-"*60)
+                Write-Host "Webhook '$($WebhookName)' created successfully!" -ForegroundColor Green
+                Write-Host "IMPORTANT: Copy the Webhook URI below. It cannot be retrieved again." -ForegroundColor Yellow
+                Write-Host ("-"*60)
+
+                # Output an object containing the URI for easy copying or programmatic use
+                $newWebhook | Select-Object Name, IsEnabled, ExpiryTime, WebhookUri
+            }
+            catch {
+                Write-Error "Failed to create webhook: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+function Remove-AutomationWebhook {
+    <#
+    .SYNOPSIS
+        Removes a webhook from an Automation runbook. Aliased as 'remwebhook'.
+
+    .DESCRIPTION
+        Deletes a webhook from a specified runbook. This action is irreversible.
+
+    .PARAMETER RunbookName
+        The name of the runbook from which to remove the webhook.
+
+    .PARAMETER WebhookName
+        The name of the webhook to remove.
+
+    .EXAMPLE
+        PS C:\> remwebhook "Restart-Service" -WebhookName "OldHook"
+#>
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$RunbookName,
+
+        [Parameter(Mandatory = $true, Position = 1)]
+        [string]$WebhookName
+    )
+    begin {
+        if (-not (Get-AzContext)) {
+            Write-Warning "No active Azure context. Run Connect-AzAccount."
+            Connect-AzAccount -ErrorAction Stop
+        }
+    }
+    process {
+        if ($PSCmdlet.ShouldProcess("webhook '$($WebhookName)' from runbook '$($RunbookName)'", "Remove")) {
+            try {
+                Remove-AzAutomationWebhook -Name $WebhookName -RunbookName $RunbookName -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -ErrorAction Stop
+                Write-Host "Successfully removed webhook '$($WebhookName)'." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to remove webhook: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+function Get-AutomationVariable {
+    <#
+    .SYNOPSIS
+        Lists Automation Account variables. Aliased as 'lsvariable'.
+
+    .DESCRIPTION
+        Retrieves one or all variables from the configured Automation Account.
+
+    .PARAMETER Name
+        The name of a specific variable to retrieve.
+
+    .EXAMPLE
+        PS C:\> lsvariable
+        Lists all variables in the account.
+
+    .EXAMPLE
+        PS C:\> lsvariable -Name "MySecret"
+        Gets the details for a specific variable (value will be null if encrypted).
+#>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false, Position = 0)]
+        [string]$Name
+    )
+    begin {
+        if (-not (Get-AzContext)) {
+            Write-Warning "No active Azure context. Run Connect-AzAccount."
+            Connect-AzAccount -ErrorAction Stop
+        }
+    }
+    process {
+        try {
+            $splat = @{
+                ResourceGroupName     = $Script:AutomationResourceGroupName
+                AutomationAccountName = $Script:AutomationAccountName
+            }
+            if ($PSBoundParameters.ContainsKey('Name')) {
+                Write-Host "Getting variable '$($Name)'..." -ForegroundColor Yellow
+                $splat['Name'] = $Name
+            } else {
+                Write-Host "Getting all variables..." -ForegroundColor Yellow
+            }
+
+            $variables = Get-AzAutomationVariable @splat -ErrorAction Stop
+            if ($null -eq $variables) {
+                Write-Host "No variables found."
+                return
+            }
+            $variables | Select-Object Name, Description, IsEncrypted, LastModifiedTime
+        }
+        catch {
+            Write-Error "An error occurred while fetching variables: $($_.Exception.Message)"
+        }
+    }
+}
+
+function New-AutomationVariable {
+    <#
+    .SYNOPSIS
+        Creates a new Automation Account variable. Aliased as 'addvariable'.
+
+    .DESCRIPTION
+        Creates a new, optionally encrypted, variable in the configured Automation Account.
+
+    .PARAMETER Name
+        The name for the new variable.
+
+    .PARAMETER Value
+        The value to store in the variable.
+
+    .PARAMETER Description
+        An optional description for the variable.
+
+    .PARAMETER Encrypted
+        A switch to encrypt the variable.
+
+    .EXAMPLE
+        PS C:\> addvariable -Name "ApiEndpoint" -Value "https://api.example.com" -Description "Main API endpoint URL."
+
+    .EXAMPLE
+        PS C:\> addvariable -Name "ApiKey" -Value "super-secret-key" -Encrypted
+        Creates a new encrypted variable.
+#>
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true, Position = 1)]
+        [object]$Value,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Description,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$Encrypted
+    )
+    begin {
+        if (-not (Get-AzContext)) {
+            Write-Warning "No active Azure context. Run Connect-AzAccount."
+            Connect-AzAccount -ErrorAction Stop
+        }
+    }
+    process {
+        if ($PSCmdlet.ShouldProcess("variable '$($Name)'", "Create")) {
+            try {
+                $splat = @{
+                    Name                  = $Name
+                    Value                 = $Value
+                    Encrypted             = $Encrypted.IsPresent
+                    ResourceGroupName     = $Script:AutomationResourceGroupName
+                    AutomationAccountName = $Script:AutomationAccountName
+                }
+                if ($PSBoundParameters.ContainsKey('Description')) {
+                    $splat['Description'] = $Description
+                }
+
+                New-AzAutomationVariable @splat -ErrorAction Stop
+                Write-Host "Successfully created variable '$($Name)'." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to create variable: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+function Set-AutomationVariable {
+    <#
+    .SYNOPSIS
+        Updates the value of an Automation Account variable. Aliased as 'setvariable'.
+
+    .DESCRIPTION
+        Changes the value of an existing variable. Note: You cannot change the encrypted state.
+
+    .PARAMETER Name
+        The name of the variable to update.
+
+    .PARAMETER Value
+        The new value for the variable.
+
+    .EXAMPLE
+        PS C:\> setvariable -Name "ApiEndpoint" -Value "https://api-v2.example.com"
+#>
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true, Position = 1)]
+        [object]$Value
+    )
+    begin {
+        if (-not (Get-AzContext)) {
+            Write-Warning "No active Azure context. Run Connect-AzAccount."
+            Connect-AzAccount -ErrorAction Stop
+        }
+    }
+    process {
+        if ($PSCmdlet.ShouldProcess("variable '$($Name)'", "Update value")) {
+            try {
+                Set-AzAutomationVariable -Name $Name -Value $Value -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -ErrorAction Stop
+                Write-Host "Successfully updated variable '$($Name)'." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to update variable: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+function Remove-AutomationVariable {
+    <#
+    .SYNOPSIS
+        Removes an Automation Account variable. Aliased as 'remvariable'.
+
+    .DESCRIPTION
+        Deletes a variable from the Automation Account. This action is irreversible.
+
+    .PARAMETER Name
+        The name of the variable to remove.
+
+    .EXAMPLE
+        PS C:\> remvariable -Name "OldApiEndpoint"
+#>
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$Name
+    )
+    begin {
+        if (-not (Get-AzContext)) {
+            Write-Warning "No active Azure context. Run Connect-AzAccount."
+            Connect-AzAccount -ErrorAction Stop
+        }
+    }
+    process {
+        if ($PSCmdlet.ShouldProcess("variable '$($Name)'", "Remove")) {
+            try {
+                Remove-AzAutomationVariable -Name $Name -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -ErrorAction Stop
+                Write-Host "Successfully removed variable '$($Name)'." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to remove variable: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+
 # --- ALIASES ---
 # Common, short aliases for quick command line use.
 Set-Alias -Name lsrb -Value Get-AutomationRunbookInfo
@@ -786,9 +1159,16 @@ Set-Alias -Name runrb -Value Invoke-AutomationRunbook
 Set-Alias -Name lsdevice -Value Get-IntuneUserDevice
 Set-Alias -Name invdevice -Value Invoke-IntuneDeviceAction
 Set-Alias -Name lsdevices -Value Get-UserDevices
-Set-Alias -Name lsdevaction -Value Get-IntuneDeviceActionStatus
+Set-Alias -Name lsdevacts -Value Get-IntuneDeviceActionStatus
 Set-Alias -Name lsap -Value Get-AutopilotDevice
-Set-Alias -Name assignap -Value Set-AutopilotDeviceUser
-Set-Alias -Name rmap -Value Remove-AutopilotDeviceUser
+Set-Alias -Name assignapusr -Value Set-AutopilotDeviceUser
+Set-Alias -Name rmapuser -Value Remove-AutopilotDeviceUser
+Set-Alias -Name lswhook -Value Get-AutomationWebhook
+Set-Alias -Name addwhook -Value New-AutomationWebhook
+Set-Alias -Name remwhook -Value Remove-AutomationWebhook
+Set-Alias -Name lsvars -Value Get-AutomationVariable
+Set-Alias -Name addavar -Value New-AutomationVariable
+Set-Alias -Name setavar -Value Set-AutomationVariable
+Set-Alias -Name remvar -Value Remove-AutomationVariable
 Write-Host "Automation Shell tools loaded. Use 'lsrb' and 'runrb'." -ForegroundColor DarkCyan
 
