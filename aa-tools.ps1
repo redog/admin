@@ -1370,7 +1370,7 @@ function Wait-AutomationJob {
         $AutomationAccountName = $Script:AutomationAccountName
 
         Write-Host "Waiting for job '$JobId' to complete..." -ForegroundColor Cyan
-        
+
         # Wait for job completion
         while ($true) {
             try {
@@ -1382,7 +1382,7 @@ function Wait-AutomationJob {
 
                 Start-Sleep -Seconds 5
             } catch {
-                Write-Error "Failed to get job status for Job ID $JobId: $($_.Exception.Message)"
+                Write-Error "Failed to get job status for Job ID ${JobId}: $($_.Exception.Message)"
                 Start-Sleep -Seconds 15 # Wait longer on error to avoid spamming failed requests
             }
         }
@@ -1431,8 +1431,6 @@ function Wait-AutomationJob {
         Write-Host ""
     }
 }
-
-
 
 # --- ALIASES ---
 # Common, short aliases for quick command line use.
