@@ -1325,6 +1325,221 @@ function Remove-AutomationVariable {
     }
 }
 
+function Get-AutomationRunbookJobHistory {
+    <#
+    .SYNOPSIS
+        Retrieves recent automation job executions for inspection or follow-up actions. Aliased as 'lsjobs'.
+
+    .DESCRIPTION
+        Wraps Get-AzAutomationJob using the configured Automation Account context and emits
+        lightweight objects focused on job identity, status, and timing. Accepts optional filters
+        for runbook name, job status, and start/end time window to keep results targeted and
+        pipeline-friendly.
+
+    .PARAMETER RunbookName
+        Filters the job history to a specific runbook.
+
+    .PARAMETER Status
+        Filters jobs by their last known status (e.g. Completed, Failed, Suspended).
+
+    .PARAMETER StartTime
+        Ignores jobs that started before this timestamp.
+
+    .PARAMETER EndTime
+        Ignores jobs that started after this timestamp.
+
+    .EXAMPLE
+        PS C:\> lsjobs -RunbookName "Restart-Service" -Status Failed -StartTime (Get-Date).AddDays(-7)
+        Returns failed jobs for the specified runbook in the last week.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [Alias('Name')]
+        [string]$RunbookName,
+
+        [Parameter()]
+        [string]$Status,
+
+        [Parameter()]
+        [datetime]$StartTime,
+
+        [Parameter()]
+        [datetime]$EndTime
+    )
+
+    begin {
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
+        }
+
+        if ([string]::IsNullOrWhiteSpace($Script:AutomationAccountName) -or
+            $Script:AutomationAccountName -eq "YourAutomationAccountName" -or
+            [string]::IsNullOrWhiteSpace($Script:AutomationResourceGroupName)) {
+            Write-Error "Configuration needed. Please set `$Script:AutomationAccountName and `$Script:AutomationResourceGroupName in the script file."
+            return
+        }
+    }
+
+    process {
+        $queryParams = @{
+            ResourceGroupName      = $Script:AutomationResourceGroupName
+            AutomationAccountName  = $Script:AutomationAccountName
+            ErrorAction            = 'Stop'
+        }
+
+        if ($PSBoundParameters.ContainsKey('RunbookName')) {
+            $queryParams['RunbookName'] = $RunbookName
+            Write-Verbose "Filtering jobs for runbook '$RunbookName'."
+        }
+
+        if ($PSBoundParameters.ContainsKey('Status')) {
+            $queryParams['Status'] = $Status
+            Write-Verbose "Filtering jobs with status '$Status'."
+        }
+
+        if ($PSBoundParameters.ContainsKey('StartTime')) {
+            $queryParams['StartTime'] = $StartTime
+            Write-Verbose "Including jobs starting after $StartTime."
+        }
+
+        if ($PSBoundParameters.ContainsKey('EndTime')) {
+            $queryParams['EndTime'] = $EndTime
+            Write-Verbose "Including jobs starting before $EndTime."
+        }
+
+        try {
+            $jobs = Get-AzAutomationJob @queryParams
+        }
+        catch {
+            Write-Error "Failed to retrieve automation jobs: $($_.Exception.Message)"
+            return
+        }
+
+        if (-not $jobs) {
+            Write-Verbose "No automation jobs matched the provided filters."
+            return
+        }
+
+        $jobs | ForEach-Object {
+            [PSCustomObject]@{
+                JobId       = $_.JobId
+                RunbookName = $_.RunbookName
+                Status      = $_.Status
+                StartTime   = $_.StartTime
+                EndTime     = $_.EndTime
+            }
+        } | Write-Output
+    }
+}
+
+function Wait-AutomationJob {
+    <#
+    .SYNOPSIS
+        Follows a running or completed Automation Job and displays its output streams. Aliased as 'tailjob'.
+
+    .DESCRIPTION
+        Takes a Job ID, waits for the job to complete if it is still running, and then
+        retrieves and prints all output streams (Output, Verbose, Warning, Error).
+        This is useful for monitoring a job's progress in real time or reviewing its results.
+
+    .PARAMETER JobId
+        The unique identifier (GUID) of the job to follow.
+
+    .EXAMPLE
+        PS C:\> tailjob -JobId "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        Waits for the specified job to complete and prints its output.
+
+    .EXAMPLE
+        PS C:\> lsjobs | Where-Object { $_.Status -eq 'Running' } | Select-Object -First 1 | tailjob
+        Finds the most recent running job and tails its output.
+#>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName = $true)]
+        [guid]$JobId
+    )
+
+    begin {
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
+        }
+
+        if ([string]::IsNullOrWhiteSpace($Script:AutomationAccountName) -or
+            $Script:AutomationAccountName -eq "YourAutomationAccountName" -or
+            [string]::IsNullOrWhiteSpace($Script:AutomationResourceGroupName)) {
+            throw "Configuration needed. Please set `$Script:AutomationAccountName and `$Script:AutomationResourceGroupName in the script file."
+        }
+    }
+
+    process {
+        $RGName = $Script:AutomationResourceGroupName
+        $AutomationAccountName = $Script:AutomationAccountName
+
+        Write-Host "Waiting for job '$JobId' to complete..." -ForegroundColor Cyan
+        
+        # Wait for job completion
+        while ($true) {
+            try {
+                $job = Get-AzAutomationJob -ResourceGroupName $RGName -AutomationAccountName $AutomationAccountName -Id $JobId -ErrorAction Stop
+
+                if ($job.Status -in @("Completed", "Failed", "Suspended", "Stopped")) {
+                    break
+                }
+
+                Start-Sleep -Seconds 5
+            } catch {
+                Write-Error "Failed to get job status for Job ID $JobId: $($_.Exception.Message)"
+                Start-Sleep -Seconds 15 # Wait longer on error to avoid spamming failed requests
+            }
+        }
+
+        # Display final status
+        $statusColor = if ($job.Status -eq "Completed") { "Green" } else { "Red" }
+        Write-Host "Runbook finished with status: $($job.Status)" -ForegroundColor $statusColor
+
+        if ($job.Status -eq "Failed" -and $job.Exception) {
+            Write-Host "Runbook Exception: $($job.Exception)" -ForegroundColor Red
+        }
+        Write-Host ""
+
+        # Define colors for different output streams
+        $streamColors = @{
+            "Output"  = "White"; "Verbose" = "Cyan"; "Warning" = "Yellow";
+            "Error"   = "Red";   "Debug"   = "Magenta";"Progress"= "Gray"
+        }
+
+        # Fetch and display outputs for relevant streams
+        foreach ($stream in @("Output", "Verbose", "Warning", "Error")) {
+            $color = $streamColors[$stream]
+            Write-Host "===== $stream Stream =====" -ForegroundColor $color
+
+            try {
+                $streamOutput = Get-AzAutomationJobOutput -ResourceGroupName $RGName -AutomationAccountName $AutomationAccountName -Id $job.JobId -Stream $stream -ErrorAction Stop
+
+                if ($streamOutput) {
+                    foreach ($entry in $streamOutput) {
+                        try {
+                            $record = Get-AzAutomationJobOutputRecord -ResourceGroupName $RGName -AutomationAccountName $AutomationAccountName -JobId $job.JobId -Id $entry.StreamRecordId -ErrorAction Stop
+                            if ($null -ne $record.Value) {
+                                $message = if ($stream -eq "Verbose") { $record.Value.Message } else { $record.Value }
+                                if ($null -ne $message) { Write-Host $message -ForegroundColor $color }
+                            }
+                        } catch {
+                            Write-Warning "Could not retrieve details for stream record ID $($entry.StreamRecordId): $($_.Exception.Message)"
+                        }
+                    }
+                }
+            } catch {
+                Write-Warning "Could not retrieve output for stream '$stream': $($_.Exception.Message)"
+            }
+            Write-Host ""
+        }
+        Write-Host ""
+    }
+}
+
+
 
 # --- ALIASES ---
 # Common, short aliases for quick command line use.
@@ -1333,6 +1548,8 @@ Set-Alias -Name lsgrp -Value Get-UserGroupMembership
 Set-Alias -Name addgrp -Value Add-UserToGroup
 Set-Alias -Name remgrp -Value Remove-UserFromGroup
 Set-Alias -Name runrb -Value Invoke-AutomationRunbook
+Set-Alias -Name lsjobs -Value Get-AutomationRunbookJobHistory
+Set-Alias -Name tailjob -Value Wait-AutomationJob
 Set-Alias -Name lsdevice -Value Get-IntuneUserDevice
 Set-Alias -Name invdevice -Value Invoke-IntuneDeviceAction
 Set-Alias -Name lsdevices -Value Get-UserDevices
