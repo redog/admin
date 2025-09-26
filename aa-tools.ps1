@@ -182,6 +182,162 @@ function Get-AutomationRunbookInfo {
     }
 }
 
+function Remove-AutomationModule {
+    <#
+    .SYNOPSIS
+        Deletes a module from the Automation Account. Aliased as 'remmodule'.
+
+    .DESCRIPTION
+        Removes a specific module from the Automation Account. This action can affect
+        runbooks that depend on the module, so use it with caution.
+
+    .PARAMETER Name
+        The name of the module to remove.
+
+    .EXAMPLE
+        PS C:\> remmodule -Name "OldModule"
+#>
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$Name
+    )
+    begin {
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
+        }
+    }
+    process {
+        if ($PSCmdlet.ShouldProcess("module '$($Name)'", "Remove")) {
+            try {
+                Remove-AzAutomationModule -Name $Name -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -ErrorAction Stop
+                Write-Host "Successfully removed module '$($Name)'." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to remove module '$($Name)': $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+function Get-AutomationRunbookRuntime {
+    <#
+    .SYNOPSIS
+        Displays the runtime version for Automation runbooks. Aliased as 'lsrbrt'.
+
+    .DESCRIPTION
+        Retrieves the configured runtime (e.g., PowerShell or Python version) for one or
+        all runbooks in the configured Automation Account.
+
+    .PARAMETER Name
+        The name of a specific runbook to inspect. If omitted, all runbooks are listed.
+
+    .EXAMPLE
+        PS C:\> lsrbrt
+        Lists the runtime version for all runbooks.
+
+    .EXAMPLE
+        PS C:\> lsrbrt -Name "My-PowerShell-Runbook"
+        Displays the runtime for a specific runbook.
+#>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $false, Position = 0)]
+        [string]$Name
+    )
+
+    begin {
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
+        }
+        if ([string]::IsNullOrWhiteSpace($Script:AutomationAccountName) -or $Script:AutomationAccountName -eq "YourAutomationAccountName") {
+            Write-Error "Configuration needed. Please set `$Script:AutomationAccountName and `$Script:AutomationResourceGroupName in the script file."
+            return
+        }
+    }
+
+    process {
+        try {
+            $splat = @{
+                ResourceGroupName     = $Script:AutomationResourceGroupName
+                AutomationAccountName = $Script:AutomationAccountName
+                ErrorAction           = 'Stop'
+            }
+            if ($PSBoundParameters.ContainsKey('Name')) {
+                $splat['Name'] = $Name
+                Write-Verbose "Getting runtime for runbook '$Name'."
+            } else {
+                Write-Verbose "Getting runtime for all runbooks."
+            }
+
+            $runbooks = Get-AzAutomationRunbook @splat
+
+            if ($null -eq $runbooks) {
+                Write-Verbose "No runbooks found."
+                return
+            }
+
+            $runbooks | ForEach-Object {
+                [PSCustomObject]@{
+                    Name         = $_.Name
+                    Type         = $_.RunbookType
+                    Runtime      = $_.RuntimeVersion
+                }
+            } | Write-Output
+        }
+        catch {
+            Write-Error $_.Exception.Message
+        }
+    }
+}
+
+function Set-AutomationRunbookRuntime {
+    <#
+    .SYNOPSIS
+        Updates the runtime version for a specific runbook. Aliased as 'setrbrt'.
+
+    .DESCRIPTION
+        Changes the runtime version for a specified runbook. You must provide a valid
+        runtime version string supported by Azure Automation for the runbook's type.
+
+    .PARAMETER Name
+        The name of the runbook to update.
+
+    .PARAMETER RuntimeVersion
+        The new runtime version to set (e.g., "7.2" for PowerShell, "3.10" for Python).
+
+    .EXAMPLE
+        PS C:\> setrbrt -Name "My-Posh-Runbook" -RuntimeVersion "7.2"
+        Updates the specified runbook to use the PowerShell 7.2 runtime.
+#>
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param (
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true, Position = 1)]
+        [string]$RuntimeVersion
+    )
+
+    begin {
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
+        }
+    }
+
+    process {
+        if ($PSCmdlet.ShouldProcess("runbook '$($Name)'", "Set Runtime to '$($RuntimeVersion)'")) {
+            try {
+                Set-AzAutomationRunbook -Name $Name -RuntimeVersion $RuntimeVersion -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -ErrorAction Stop
+                Write-Host "Successfully updated runtime for runbook '$($Name)' to '$($RuntimeVersion)'." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to update runtime for runbook '$($Name)': $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
 function Invoke-AutomationRunbook {
     param (
         [Parameter(Mandatory=$true)]
@@ -232,89 +388,14 @@ function Invoke-AutomationRunbook {
 
         $job = Start-AzAutomationRunbook @startParams
         Write-Host "Runbook started successfully. Job ID: $($job.JobId). Waiting for completion..." -ForegroundColor Cyan
+
+        # Wait for the job and display its output
+        $job | Wait-AutomationJob
+
     } catch {
         Write-Error "Failed to start runbook '$RunbookName': $($_.Exception.Message)"
         return
     }
-
-    # Wait for job completion
-    Write-Host "Monitoring job status..." -ForegroundColor Gray
-    while ($true) {
-        try {
-            $job = Get-AzAutomationJob -ResourceGroupName $RGName -AutomationAccountName $AutomationAccountName -Id $job.JobId -ErrorAction Stop
-
-            if ($job.Status -in @("Completed", "Failed", "Suspended", "Stopped")) {
-                break
-            }
-
-            Start-Sleep -Seconds 5
-        } catch {
-            Write-Error "Failed to get job status for Job ID $($job.JobId): $($_.Exception.Message)"
-            Start-Sleep -Seconds 15
-        }
-    }
-
-    # Display final status
-    $statusColor = if ($job.Status -eq "Completed") { "Green" } else { "Red" }
-    Write-Host "Runbook finished with status: $($job.Status)" -ForegroundColor $statusColor
-
-    # If the job failed, print the exception
-    if ($job.Status -eq "Failed") {
-        if ($job.Exception) {
-            Write-Host "Runbook Exception: $($job.Exception)" -ForegroundColor Red
-        }
-    }
-    Write-Host ""
-
-    # Define colors for different output streams
-    $streamColors = @{
-        "Output"  = "White"
-        "Verbose" = "Cyan"
-        "Warning" = "Yellow"
-        "Error"   = "Red"
-        "Debug"   = "Magenta"
-        "Progress"= "Gray"
-    }
-
-    # Fetch and display outputs for relevant streams
-    foreach ($stream in @("Output", "Verbose", "Warning", "Error")) {
-        if ($streamColors.ContainsKey($stream)) {
-            $color = $streamColors[$stream]
-        } else {
-            $color = "White"
-        }
-
-        Write-Host "===== $stream Stream =====" -ForegroundColor $color
-
-        try {
-            $streamOutput = Get-AzAutomationJobOutput -ResourceGroupName $RGName -AutomationAccountName $AutomationAccountName -Id $job.JobId -Stream $stream -ErrorAction Stop
-
-            if ($streamOutput) {
-                foreach ($entry in $streamOutput) {
-                    try {
-                        $record = Get-AzAutomationJobOutputRecord -ResourceGroupName $RGName -AutomationAccountName $AutomationAccountName -JobId $job.JobId -Id $entry.StreamRecordId -ErrorAction Stop
-
-                        if ($null -ne $record.Value) {
-                            if ($stream -eq "Verbose") {
-                                $messageToPrint = $record.Value.Message
-                                if ($null -ne $messageToPrint) {
-                                    Write-Host $messageToPrint -ForegroundColor $color
-                                }
-                            } else {
-                                Write-Host $record.Value -ForegroundColor $color
-                            }
-                        }
-                    } catch {
-                        Write-Warning "Could not retrieve details for stream record ID $($entry.StreamRecordId) in stream '$stream': $($_.Exception.Message)"
-                    }
-                }
-            }
-        } catch {
-            Write-Warning "Could not retrieve output for stream '$stream': $($_.Exception.Message)"
-        }
-        Write-Host ""
-    }
-    Write-Host ""
 }
 
 function Get-AutomationRunbookJobHistory {
@@ -425,110 +506,73 @@ function Get-AutomationRunbookJobHistory {
     }
 }
 
-function Get-UserDevices {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $false, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
-        [string]$UserPrincipalName
-    )
-
-    process {
-        try {
-            $selectProperties = @(
-                "deviceName",
-                "serialNumber",
-                "manufacturer",
-                "model",
-                "userPrincipalName" # Included for the 'all users' scenario
-            )
-
-            if (-not [string]::IsNullOrWhiteSpace($UserPrincipalName)) {
-                Write-Verbose "Attempting to retrieve devices for user: $UserPrincipalName"
-                # Get the user object to ensure the UPN is valid and to get the ID
-                try {
-                    $user = Get-MgUser -UserId $UserPrincipalName -ErrorAction Stop -Property "Id"
-                    Write-Verbose "Found user with ID: $($user.Id)"
-                }
-                catch {
-                    Write-Error "User '$UserPrincipalName' not found or error retrieving user: $($_.Exception.Message)"
-                    return
-                }
-
-                # Retrieve managed devices for the specified user
-                $devices = Get-MgUserManagedDevice -UserId $user.Id -Property $selectProperties -ErrorAction Stop -All
-                if ($null -eq $devices -or $devices.Count -eq 0) {
-                    Write-Verbose "No managed devices found for $UserPrincipalName."
-                    return
-                }
-            }
-            else {
-                Write-Verbose "Attempting to retrieve all managed devices."
-                # Retrieve all managed devices
-                $devices = Get-MgDeviceManagementManagedDevice -Property $selectProperties -ErrorAction Stop -All
-                if ($null -eq $devices -or $devices.Count -eq 0) {
-                    Write-Verbose "No managed devices found in the tenant."
-                    return
-                }
-            }
-
-            $output = foreach ($device in $devices) {
-                [PSCustomObject]@{
-                    UserPrincipalName = if (-not [string]::IsNullOrWhiteSpace($UserPrincipalName)) { $UserPrincipalName } else { $device.UserPrincipalName }
-                    DeviceName        = $device.DeviceName
-                    SerialNumber      = $device.SerialNumber
-                    Brand             = $device.Manufacturer
-                    Model             = $device.Model
-                }
-            }
-
-            $output | Select-Object UserPrincipalName, DeviceName, SerialNumber, Brand, Model | Write-Output
-
-        }
-        catch {
-            Write-Error "An error occurred: $($_.Exception.Message)"
-            Write-Error "Stack Trace: $($_.ScriptStackTrace)"
-        }
-    }
-}
-
 function Get-IntuneUserDevice {
     <#
     .SYNOPSIS
-        Lists the Intune-managed devices for a specific user. Aliased as 'lsdevice'.
+        Lists Intune-managed devices. Aliased as 'lsdevice' and 'lsdevices'.
 
     .DESCRIPTION
-        Queries Microsoft Graph to find all devices enrolled in Intune for a given user.
-        The output includes the device ID, which is required for other device actions.
-        Emits raw device objects; use -Verbose to view status messages.
+        Queries Microsoft Graph to find all devices enrolled in Intune. If a UserPrincipalName
+        is provided, it filters the list to that specific user. The output includes key
+        identifiers and compliance status needed for other actions.
 
     .PARAMETER UserPrincipalName
-        The User Principal Name (email address) of the user to query.
+        The User Principal Name (email address) of the user to query. If omitted, all
+        Intune-managed devices in the tenant are returned.
 
     .EXAMPLE
         PS C:\> lsdevice "user@domain.com"
+        Lists all devices for a specific user.
+
+    .EXAMPLE
+        PS C:\> lsdevices
+        Lists all Intune-managed devices in the tenant.
 #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [Parameter(Mandatory = $false, Position = 0, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
         [string]$UserPrincipalName
     )
     begin {
-        if (-not (Ensure-MgGraphContext -Scopes 'DeviceManagementManagedDevices.Read.All' -AutoConnect)) {
+        # Request broader permissions to ensure user lookups and device reads are covered.
+        if (-not (Ensure-MgGraphContext -Scopes 'User.Read.All', 'DeviceManagementManagedDevices.Read.All' -AutoConnect)) {
             return
         }
     }
     process {
         try {
-            Write-Verbose "Finding Intune devices for '$UserPrincipalName'."
-            $devices = Get-MgDeviceManagementManagedDevice -Filter "userPrincipalName eq '$($UserPrincipalName)'" -ErrorAction Stop
+            $queryParams = @{
+                All = $true # Retrieve all records
+                ErrorAction = 'Stop'
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($UserPrincipalName)) {
+                Write-Verbose "Finding Intune devices for '$UserPrincipalName'."
+                # Validate the user exists first to provide a better error message.
+                $user = Get-MgUser -UserId $UserPrincipalName -ErrorAction Stop -Property 'Id'
+                $queryParams['Filter'] = "userPrincipalName eq '$($user.UserPrincipalName)'"
+            } else {
+                Write-Verbose "Finding all Intune devices."
+            }
+
+            $devices = Get-MgDeviceManagementManagedDevice @queryParams
+
             if ($null -eq $devices) {
-                Write-Verbose "No Intune-managed devices found for '$UserPrincipalName'."
+                if ($UserPrincipalName) {
+                    Write-Verbose "No Intune-managed devices found for '$UserPrincipalName'."
+                } else {
+                    Write-Verbose "No Intune-managed devices found in the tenant."
+                }
                 return
             }
-            $devices | Select-Object DeviceName, Id, OperatingSystem, ComplianceState, ManagedDeviceOwnerType | Write-Output
+
+            # Select a comprehensive set of properties from both original functions
+            $devices | Select-Object UserPrincipalName, DeviceName, Id, Manufacturer, Model, SerialNumber, OperatingSystem, ComplianceState, ManagedDeviceOwnerType | Write-Output
         }
         catch {
-            Write-Error "Could not retrieve devices for '$($UserPrincipalName)': $($_.Exception.Message)"
+            # Provide a more specific error message based on the context
+            $errorMessage = if ($UserPrincipalName) { "Could not retrieve devices for '$($UserPrincipalName)'" } else { "Could not retrieve devices" }
+            Write-Error "$($errorMessage): $($_.Exception.Message)"
         }
     }
 }
@@ -656,8 +700,6 @@ function Get-UserGroupMembership {
 
     .EXAMPLE
         PS C:\> lsgrp "user@domain.com"
-    .TODO
-       Not listing names and other properties properly
 #>
     [CmdletBinding()]
     param(
@@ -665,19 +707,22 @@ function Get-UserGroupMembership {
         [string]$UserPrincipalName
     )
     begin {
-        if (-not (Ensure-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.Read.All' -AutoConnect)) {
+        if (-not (Ensure-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.Read.All', 'Group.Read.All' -AutoConnect)) {
             return
         }
     }
     process {
         try {
             Write-Verbose "Fetching group memberships for '$UserPrincipalName'."
-            $groups = Get-MgUserMemberOf -UserId $UserPrincipalName -ErrorAction Stop
+            # Use -All to ensure all group memberships are retrieved
+            $groups = Get-MgUserMemberOf -UserId $UserPrincipalName -All -ErrorAction Stop
             if ($null -eq $groups) {
                 Write-Verbose "User '$UserPrincipalName' is not a member of any groups."
                 return
             }
-            $groups | Select-Object DisplayName, Id, Description | Write-Output
+            # The output can contain different object types (e.g., directory roles). We only want groups.
+            # The '@odata.type' property helps us identify them.
+            $groups | Where-Object { $_.AdditionalProperties['@odata.type'] -eq '#microsoft.graph.group' } | Select-Object DisplayName, Id, Description | Write-Output
         }
         catch {
             Write-Error "An error occurred while fetching groups for '$($UserPrincipalName)': $($_.Exception.Message)"
@@ -815,15 +860,9 @@ function Remove-UserFromGroup {
                 }
             }
 
-            # We need the user's membership ID within the group to remove them
-            $membership = Get-MgGroupMember -GroupId $group.Id -Filter "id eq '$($user.Id)'" -ErrorAction Stop
-            if (-not $membership) {
-                Write-Warning "User '$($user.UserPrincipalName)' is not a member of group '$($group.DisplayName)'."
-                return
-            }
-
             if ($PSCmdlet.ShouldProcess("user '$($user.UserPrincipalName)' from group '$($group.DisplayName)'", "Remove Membership")) {
                 Write-Host "Removing '$($user.UserPrincipalName)' from group '$($group.DisplayName)'..." -ForegroundColor Yellow
+                # The DirectoryObjectId is the user's ID. No need to pre-query membership.
                 Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction Stop
                 Write-Host "Successfully removed user from group." -ForegroundColor Green
             }
@@ -1288,6 +1327,170 @@ function Set-AutomationVariable {
     }
 }
 
+function Set-AutomationVariable {
+    <#
+    .SYNOPSIS
+        Updates the value of an Automation Account variable. Aliased as 'setvariable'.
+
+    .DESCRIPTION
+        Changes the value of an existing variable. Note: You cannot change the encrypted state.
+
+    .PARAMETER Name
+        The name of the variable to update.
+
+    .PARAMETER Value
+        The new value for the variable.
+
+    .EXAMPLE
+        PS C:\> setvariable -Name "ApiEndpoint" -Value "https://api-v2.example.com"
+#>
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true, Position = 1)]
+        [object]$Value
+    )
+    begin {
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
+        }
+    }
+    process {
+        if ($PSCmdlet.ShouldProcess("variable '$($Name)'", "Update value")) {
+            try {
+                Set-AzAutomationVariable -Name $Name -Value $Value -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -ErrorAction Stop
+                Write-Host "Successfully updated variable '$($Name)'." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to update variable: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+function Get-AutomationModule {
+    <#
+    .SYNOPSIS
+        Lists modules in the Automation Account. Aliased as 'lsmodule'.
+
+    .DESCRIPTION
+        Retrieves a list of modules and their versions from the configured Automation Account.
+        This is useful for checking which modules are available for your runbooks.
+
+    .PARAMETER Name
+        The name of a specific module to retrieve.
+
+    .EXAMPLE
+        PS C:\> lsmodule
+        Lists all modules in the account.
+
+    .EXAMPLE
+        PS C:\> lsmodule -Name "Az.Accounts"
+        Gets the details for a specific module.
+#>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false, Position = 0)]
+        [string]$Name
+    )
+    begin {
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
+        }
+    }
+    process {
+        try {
+            $splat = @{
+                ResourceGroupName     = $Script:AutomationResourceGroupName
+                AutomationAccountName = $Script:AutomationAccountName
+                ErrorAction           = 'Stop'
+            }
+            if ($PSBoundParameters.ContainsKey('Name')) {
+                $splat['Name'] = $Name
+                Write-Verbose "Getting module '$Name'."
+            } else {
+                Write-Verbose "Getting all Automation modules."
+            }
+
+            $modules = Get-AzAutomationModule @splat
+
+            if ($null -eq $modules) {
+                Write-Verbose "No modules found."
+                return
+            }
+
+            $modules | Select-Object Name, Version, IsGlobal, CreationTime
+        }
+        catch {
+            Write-Error "An error occurred while fetching modules: $($_.Exception.Message)"
+        }
+    }
+}
+
+function Import-AutomationModule {
+    <#
+    .SYNOPSIS
+        Installs or updates a module from the PowerShell Gallery. Aliased as 'addmodule'.
+
+    .DESCRIPTION
+        Creates a new module import job in the Automation Account to install or update
+        a module from the PowerShell Gallery. This process runs asynchronously.
+
+    .PARAMETER Name
+        The name of the module to install (e.g., "Az.Accounts").
+
+    .PARAMETER Version
+        The specific version of the module to install. If omitted, the latest version
+        from the gallery will be used.
+
+    .EXAMPLE
+        PS C:\> addmodule -Name "ExchangeOnlineManagement"
+        Installs the latest version of the ExchangeOnlineManagement module.
+
+    .EXAMPLE
+        PS C:\> addmodule -Name "Az.Accounts" -Version "6.9.0"
+        Installs a specific version of the Az.Accounts module.
+#>
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $false, Position = 1)]
+        [string]$Version
+    )
+    begin {
+        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+            return
+        }
+    }
+    process {
+        if ($PSCmdlet.ShouldProcess("module '$($Name)'", "Import from PowerShell Gallery")) {
+            try {
+                $splat = @{
+                    Name                  = $Name
+                    ResourceGroupName     = $Script:AutomationResourceGroupName
+                    AutomationAccountName = $Script:AutomationAccountName
+                    ErrorAction           = 'Stop'
+                }
+                if ($PSBoundParameters.ContainsKey('Version')) {
+                    $splat['ModuleVersion'] = $Version
+                }
+
+                New-AzAutomationModule @splat
+
+                Write-Host "Successfully started import job for module '$($Name)'." -ForegroundColor Green
+                Write-Host "Go to the Automation Account -> Modules to monitor progress." -ForegroundColor Cyan
+            }
+            catch {
+                Write-Error "Failed to start import job for module '$($Name)': $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
 function Remove-AutomationVariable {
     <#
     .SYNOPSIS
@@ -1322,6 +1525,64 @@ function Remove-AutomationVariable {
                 Write-Error "Failed to remove variable: $($_.Exception.Message)"
             }
         }
+    }
+}
+
+
+function Show-AutomationJobOutput {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
+        [Microsoft.Azure.Commands.Automation.Model.Job]$Job
+    )
+
+    process {
+        # This function assumes the job has already completed.
+        $RGName = $Job.ResourceGroupName
+        $AutomationAccountName = $Job.AutomationAccountName
+
+        # Display final status
+        $statusColor = if ($Job.Status -eq "Completed") { "Green" } else { "Red" }
+        Write-Host "Runbook finished with status: $($Job.Status)" -ForegroundColor $statusColor
+
+        if ($Job.Status -eq "Failed" -and $Job.Exception) {
+            Write-Host "Runbook Exception: $($Job.Exception)" -ForegroundColor Red
+        }
+        Write-Host ""
+
+        # Define colors for different output streams
+        $streamColors = @{
+            "Output"  = "White"; "Verbose" = "Cyan"; "Warning" = "Yellow";
+            "Error"   = "Red";   "Debug"   = "Magenta";"Progress"= "Gray"
+        }
+
+        # Fetch and display outputs for relevant streams
+        foreach ($stream in @("Output", "Verbose", "Warning", "Error")) {
+            $color = $streamColors[$stream]
+            Write-Host "===== $stream Stream =====" -ForegroundColor $color
+
+            try {
+                $streamOutput = Get-AzAutomationJobOutput -ResourceGroupName $RGName -AutomationAccountName $AutomationAccountName -Id $Job.JobId -Stream $stream -ErrorAction Stop
+
+                if ($streamOutput) {
+                    foreach ($entry in $streamOutput) {
+                        try {
+                            $record = Get-AzAutomationJobOutputRecord -ResourceGroupName $RGName -AutomationAccountName $AutomationAccountName -JobId $Job.JobId -Id $entry.StreamRecordId -ErrorAction Stop
+                            if ($null -ne $record.Value) {
+                                $message = if ($stream -eq "Verbose") { $record.Value.Message } else { $record.Value }
+                                if ($null -ne $message) { Write-Host $message -ForegroundColor $color }
+                            }
+                        } catch {
+                            Write-Warning "Could not retrieve details for stream record ID $($entry.StreamRecordId): $($_.Exception.Message)"
+                        }
+                    }
+                }
+            } catch {
+                Write-Warning "Could not retrieve output for stream '$stream': $($_.Exception.Message)"
+            }
+            Write-Host ""
+        }
+        Write-Host ""
     }
 }
 
@@ -1387,54 +1648,16 @@ function Wait-AutomationJob {
             }
         }
 
-        # Display final status
-        $statusColor = if ($job.Status -eq "Completed") { "Green" } else { "Red" }
-        Write-Host "Runbook finished with status: $($job.Status)" -ForegroundColor $statusColor
-
-        if ($job.Status -eq "Failed" -and $job.Exception) {
-            Write-Host "Runbook Exception: $($job.Exception)" -ForegroundColor Red
-        }
-        Write-Host ""
-
-        # Define colors for different output streams
-        $streamColors = @{
-            "Output"  = "White"; "Verbose" = "Cyan"; "Warning" = "Yellow";
-            "Error"   = "Red";   "Debug"   = "Magenta";"Progress"= "Gray"
-        }
-
-        # Fetch and display outputs for relevant streams
-        foreach ($stream in @("Output", "Verbose", "Warning", "Error")) {
-            $color = $streamColors[$stream]
-            Write-Host "===== $stream Stream =====" -ForegroundColor $color
-
-            try {
-                $streamOutput = Get-AzAutomationJobOutput -ResourceGroupName $RGName -AutomationAccountName $AutomationAccountName -Id $job.JobId -Stream $stream -ErrorAction Stop
-
-                if ($streamOutput) {
-                    foreach ($entry in $streamOutput) {
-                        try {
-                            $record = Get-AzAutomationJobOutputRecord -ResourceGroupName $RGName -AutomationAccountName $AutomationAccountName -JobId $job.JobId -Id $entry.StreamRecordId -ErrorAction Stop
-                            if ($null -ne $record.Value) {
-                                $message = if ($stream -eq "Verbose") { $record.Value.Message } else { $record.Value }
-                                if ($null -ne $message) { Write-Host $message -ForegroundColor $color }
-                            }
-                        } catch {
-                            Write-Warning "Could not retrieve details for stream record ID $($entry.StreamRecordId): $($_.Exception.Message)"
-                        }
-                    }
-                }
-            } catch {
-                Write-Warning "Could not retrieve output for stream '$stream': $($_.Exception.Message)"
-            }
-            Write-Host ""
-        }
-        Write-Host ""
+        # Once the job is complete, pass the final job object to the output display function
+        $job | Show-AutomationJobOutput
     }
 }
 
 # --- ALIASES ---
 # Common, short aliases for quick command line use.
 Set-Alias -Name lsrb -Value Get-AutomationRunbookInfo
+Set-Alias -Name lsrbrt -Value Get-AutomationRunbookRuntime
+Set-Alias -Name setrbrt -Value Set-AutomationRunbookRuntime
 Set-Alias -Name lsgrp -Value Get-UserGroupMembership
 Set-Alias -Name addgrp -Value Add-UserToGroup
 Set-Alias -Name remgrp -Value Remove-UserFromGroup
@@ -1442,17 +1665,21 @@ Set-Alias -Name runrb -Value Invoke-AutomationRunbook
 Set-Alias -Name lsjobs -Value Get-AutomationRunbookJobHistory
 Set-Alias -Name tailjob -Value Wait-AutomationJob
 Set-Alias -Name lsdevice -Value Get-IntuneUserDevice
+Set-Alias -Name lsdevices -Value Get-IntuneUserDevice # Alias for listing all devices
 Set-Alias -Name invdevice -Value Invoke-IntuneDeviceAction
-Set-Alias -Name lsdevices -Value Get-UserDevices
 Set-Alias -Name lsdevacts -Value Get-IntuneDeviceActionStatus
 Set-Alias -Name lsap -Value Get-AutopilotDevice
 Set-Alias -Name assignapusr -Value Set-AutopilotDeviceUser
 Set-Alias -Name rmapuser -Value Remove-AutopilotDeviceUser
 Set-Alias -Name lswhook -Value Get-AutomationWebhook
 Set-Alias -Name addwhook -Value New-AutomationWebhook
-Set-Alias -Name remwhook -Value Remove-AutomationWebhook
-Set-Alias -Name lsvars -Value Get-AutomationVariable
-Set-Alias -Name addavar -Value New-AutomationVariable
-Set-Alias -Name setavar -Value Set-AutomationVariable
-Set-Alias -Name remvar -Value Remove-AutomationVariable
-Write-Host "Automation Shell tools loaded. Use 'lsrb' and 'runrb'." -ForegroundColor DarkCyan
+Set-Alias -Name rmwhook -Value Remove-AutomationWebhook
+Set-Alias -Name lsvar -Value Get-AutomationVariable
+Set-Alias -Name addvar -Value New-AutomationVariable
+Set-Alias -Name setvar -Value Set-AutomationVariable
+Set-Alias -Name rmvar -Value Remove-AutomationVariable
+
+Set-Alias -Name lsmod -Value Get-AutomationModule
+Set-Alias -Name addmod -Value Import-AutomationModule
+Set-Alias -Name rmmod -Value Remove-AutomationModule
+Write-Host "Automation Shell tools loaded. Key commands: lsrb, runrb, lsdevice, lsmod, lsgrp" -ForegroundColor DarkCyan
