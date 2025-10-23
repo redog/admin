@@ -44,83 +44,88 @@ function Read-IMELog {
     .EXAMPLE
       Read-IMELog -Path .\AgentExecutor.log -Since (Get-Date).AddHours(-1) -Component 'Win32App' -AsObject
     #>
+
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]
-        [string]$Path,
-
+        [Parameter(Mandatory)][string]$Path,
         [switch]$Follow,
         [int]$Tail = 0,
-
         [datetime]$Since,
-
         [string]$Component,
         [switch]$ComponentRegex,
-
-        [ValidateSet(1,2,3)]
-        [int]$MinLevel = 1,
-
+        [ValidateSet(1,2,3)][int]$MinLevel = 1,
         [switch]$AsObject,
         [switch]$NoColor
     )
 
     begin {
-        $errPref = $ErrorActionPreference
         $ErrorActionPreference = 'Stop'
 
         function _LevelName([int]$t) {
-            switch ($t) {
-                3 {'Error'}
-                2 {'Warn'}
-                default {'Info'}
-            }
+            switch ($t) { 3 {'Error'} 2 {'Warn'} default {'Info'} }
         }
         function _LevelColor([int]$t) {
-            switch ($t) {
-                3 {'Red'}
-                2 {'Yellow'}
-                default {'Gray'}
-            }
+            switch ($t) { 3 {'Red'} 2 {'Yellow'} default {'Gray'} }
         }
 
-        # Regex bits
+        # Date parsing helper (safe for Windows PowerShell + pwsh)
+        function _Parse-LocalDate([string]$dateStr, [string]$timeStr) {
+            if ([string]::IsNullOrWhiteSpace($dateStr) -or [string]::IsNullOrWhiteSpace($timeStr)) { return $null }
+            $timeNoOffset = $timeStr -replace '([+-]\d+)$',''
+            $combo = "$dateStr $timeNoOffset"
+            $ci   = [System.Globalization.CultureInfo]::InvariantCulture
+            $fmtS = @('MM-dd-yyyy HH:mm:ss.fff','MM-dd-yyyy HH:mm:ss','M-d-yyyy HH:mm:ss.fff','M-d-yyyy HH:mm:ss')
+            foreach ($f in $fmtS) {
+                try {
+                    $tmp = [datetime]::ParseExact($combo, $f, $ci, [System.Globalization.DateTimeStyles]::AssumeLocal)
+                    return [datetime]::SpecifyKind($tmp, [System.DateTimeKind]::Local)
+                } catch { }
+            }
+            return $null
+        }
+
         $hasCMTracePattern = [regex]'<!\[LOG\[(.*?)\]LOG\]!>(.*)$'
         $kvPattern         = [regex]'(\w+)="([^"]*)"'
 
-        # Reader setup
         if (-not (Test-Path -LiteralPath $Path)) {
             throw "Path not found: $Path"
         }
 
-        $getContentParams = @{
-            LiteralPath = $Path
-            Encoding    = 'UTF8'
-            ErrorAction = 'Stop'
-        }
+        $getContentParams = @{ LiteralPath = $Path; Encoding = 'UTF8'; ErrorAction = 'Stop' }
         if ($Tail -gt 0) { $getContentParams['Tail'] = $Tail }
         if ($Follow)     { $getContentParams['Wait'] = $true }
 
-        # Helper to parse one line into an object
         function _Parse-Line([string]$line) {
             if ([string]::IsNullOrWhiteSpace($line)) { return $null }
-
-            $msg = $null
-            $attrText = $null
-            $attrs = [ordered]@{}
 
             $m = $hasCMTracePattern.Match($line)
             if ($m.Success) {
                 $msg = $m.Groups[1].Value
                 $attrText = $m.Groups[2].Value
-
-                foreach ($km in $kvPattern.Matches($attrText)) {
-                    $k = $km.Groups[1].Value
-                    $v = $km.Groups[2].Value
-                    $attrs[$k] = $v
+                $attrs = [ordered]@{}
+                foreach ($kv in $kvPattern.Matches($attrText)) {
+                    $attrs[$kv.Groups[1].Value] = $kv.Groups[2].Value
                 }
-            } else {
-                # Fallback for non-CMTrace lines—emit as-is
-                return [pscustomobject]@{
+                $dateStr = $attrs['date']
+                $timeStr = $attrs['time']
+                $dtLocal = _Parse-LocalDate $dateStr $timeStr
+                $lvl = ($attrs['type'] -as [int]); if (-not $lvl) { $lvl = 1 }
+                [pscustomobject]@{
+                    TimeUTC    = ($dtLocal ? $dtLocal.ToUniversalTime() : $null)
+                    TimeLocal  = $dtLocal
+                    Date       = $dateStr
+                    Component  = $attrs['component']
+                    Level      = $lvl
+                    LevelName  = _LevelName $lvl
+                    Thread     = $attrs['thread']
+                    File       = $attrs['file']
+                    Line       = $attrs['line']
+                    Message    = $msg
+                    Raw        = $line
+                }
+            }
+            else {
+                [pscustomobject]@{
                     TimeUTC    = $null
                     TimeLocal  = $null
                     Date       = $null
@@ -134,117 +139,39 @@ function Read-IMELog {
                     Raw        = $line
                 }
             }
-
-            # Extract attributes with safety
-            $dateStr = $attrs['date']  # usually MM-dd-yyyy
-            $timeStr = $attrs['time']  # e.g. 10:11:12.345-300 (offset minutes)
-            $comp    = $attrs['component']
-            $typeRaw = $attrs['type']
-            $thread  = $attrs['thread']
-            $file    = $attrs['file']
-            $ln      = $attrs['line']
-
-            # Parse datetime (strip non-standard minute offset suffix like +480 or -300)
-            $timeNoOffset = if ($timeStr) { ($timeStr -replace '([+-]\d+)$','') } else { $null }
-            $dtLocal = $null
-            if ($dateStr -and $timeNoOffset) {
-                $combo = "$dateStr $timeNoOffset"
-                $fmts = @('MM-dd-yyyy HH:mm:ss.fff','MM-dd-yyyy HH:mm:ss','M-d-yyyy HH:mm:ss.fff','M-d-yyyy HH:mm:ss')
-                foreach ($f in $fmts) {
-                    if ([datetime]::TryParseExact($combo, $f, $null, [System.Globalization.DateTimeStyles]::AssumeLocal, [ref]$dtLocal)) {
-                        break
-                    }
-                }
-            }
-
-            $lvl = 1
-            if ($typeRaw -as [int]) { $lvl = [int]$typeRaw }
-            $lvlName = _LevelName $lvl
-
-            [pscustomobject]@{
-                TimeUTC    = ($dtLocal ? $dtLocal.ToUniversalTime() : $null)
-                TimeLocal  = $dtLocal
-                Date       = $dateStr
-                Component  = $comp
-                Level      = $lvl
-                LevelName  = $lvlName
-                Thread     = $thread
-                File       = $file
-                Line       = $ln
-                Message    = $msg
-                Raw        = $line
-            }
         }
-        # Parse datetime (strip non-standard minute-offset suffix like +480 or -300)
-        $timeNoOffset = if ($timeStr) { ($timeStr -replace '([+-]\d+)$','') } else { $null }
-        $dtLocal = $null
-        if ($dateStr -and $timeNoOffset) {
-            $combo = "$dateStr $timeNoOffset"
-            $fmts  = @(
-                'MM-dd-yyyy HH:mm:ss.fff',
-                'MM-dd-yyyy HH:mm:ss',
-                'M-d-yyyy HH:mm:ss.fff',
-                'M-d-yyyy HH:mm:ss'
-            )
 
-            $ci = [System.Globalization.CultureInfo]::InvariantCulture
-            foreach ($f in $fmts) {
-                $tmp = [datetime]::MinValue
-                if ([datetime]::TryParseExact($combo, $f, $ci, [System.Globalization.DateTimeStyles]::None, [ref]$tmp)) {
-                    # Treat parsed time as local
-                    $dtLocal = [datetime]::SpecifyKind($tmp, [System.DateTimeKind]::Local)
-                    break
-                }
-            }
-        }
-        # Filter predicate builder
         function _Include([pscustomobject]$o) {
             if (-not $o) { return $false }
             if ($o.Level -lt $MinLevel) { return $false }
             if ($Since -and $o.TimeLocal -and ($o.TimeLocal -lt $Since)) { return $false }
             if ($Component) {
-                if ($ComponentRegex) {
-                    if (-not ($o.Component -match $Component)) { return $false }
-                } else {
-                    if ($o.Component -ne $Component) { return $false }
-                }
+                if ($ComponentRegex) { if (-not ($o.Component -match $Component)) { return $false } }
+                else { if ($o.Component -ne $Component) { return $false } }
             }
             return $true
         }
 
-        # Printer
         function _Print([pscustomobject]$o) {
             if ($AsObject) { return $o }
-
             $ts = if ($o.TimeLocal) { $o.TimeLocal.ToString('yyyy-MM-dd HH:mm:ss.fff') } else { '......................' }
             $comp = if ($o.Component) { $o.Component } else { '-' }
-            $lvlName = $o.LevelName
             $lineInfo = if ($o.File -and $o.Line) { " ($($o.File):$($o.Line))" } else { '' }
             $thread  = if ($o.Thread) { " [$($o.Thread)]" } else { '' }
-
-            $text = "[${ts}] [$comp] [$lvlName]$thread$lineInfo  $($o.Message)"
-
-            if ($NoColor) {
-                Write-Host $text
-            } else {
-                $fg = _LevelColor $o.Level
-                Write-Host $text -ForegroundColor $fg
-            }
+            $text = "[$ts] [$comp] [$($o.LevelName)]$thread$lineInfo  $($o.Message)"
+            if ($NoColor) { Write-Host $text }
+            else { Write-Host $text -ForegroundColor (_LevelColor $o.Level) }
         }
     }
+
     process {
-        try {
-            $stream = Get-Content @getContentParams
-            foreach ($line in $stream) {
-                $obj = _Parse-Line $line
-                if (_Include $obj) {
-                    $out = _Print $obj
-                    if ($AsObject -and $out) { $out } # emit object to pipeline
-                }
+        $stream = Get-Content @getContentParams
+        foreach ($line in $stream) {
+            $obj = _Parse-Line $line
+            if (_Include $obj) {
+                $out = _Print $obj
+                if ($AsObject -and $out) { $out }
             }
-        }
-        finally {
-            $ErrorActionPreference = $errPref
         }
     }
 }
