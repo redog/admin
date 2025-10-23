@@ -175,7 +175,28 @@ function Read-IMELog {
                 Raw        = $line
             }
         }
+        # Parse datetime (strip non-standard minute-offset suffix like +480 or -300)
+        $timeNoOffset = if ($timeStr) { ($timeStr -replace '([+-]\d+)$','') } else { $null }
+        $dtLocal = $null
+        if ($dateStr -and $timeNoOffset) {
+            $combo = "$dateStr $timeNoOffset"
+            $fmts  = @(
+                'MM-dd-yyyy HH:mm:ss.fff',
+                'MM-dd-yyyy HH:mm:ss',
+                'M-d-yyyy HH:mm:ss.fff',
+                'M-d-yyyy HH:mm:ss'
+            )
 
+            $ci = [System.Globalization.CultureInfo]::InvariantCulture
+            foreach ($f in $fmts) {
+                $tmp = [datetime]::MinValue
+                if ([datetime]::TryParseExact($combo, $f, $ci, [System.Globalization.DateTimeStyles]::None, [ref]$tmp)) {
+                    # Treat parsed time as local
+                    $dtLocal = [datetime]::SpecifyKind($tmp, [System.DateTimeKind]::Local)
+                    break
+                }
+            }
+        }
         # Filter predicate builder
         function _Include([pscustomobject]$o) {
             if (-not $o) { return $false }
