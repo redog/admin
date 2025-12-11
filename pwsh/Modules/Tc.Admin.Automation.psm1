@@ -40,7 +40,7 @@ function Get-AutomationRunbookInfo {
 
     begin {
         # Check for Azure connection
-        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
         # Check if config is set
@@ -98,7 +98,7 @@ function Invoke-AutomationRunbook {
         [hashtable]$Parameters = @{}
     )
 
-    if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+    if (-not (Test-AzAutomationContext -AutoConnect)) {
         return
     }
 
@@ -265,7 +265,7 @@ function Get-AutomationRunbookJobHistory {
     )
 
     begin {
-        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
 
@@ -350,7 +350,7 @@ function Get-AutomationWebhook {
         [string]$RunbookName
     )
     begin {
-        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
     }
@@ -415,7 +415,7 @@ function New-AutomationWebhook {
         [switch]$Disabled
     )
     begin {
-        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
     }
@@ -473,7 +473,7 @@ function Remove-AutomationWebhook {
         [string]$WebhookName
     )
     begin {
-        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
     }
@@ -516,7 +516,7 @@ function Get-AutomationVariable {
         [string]$Name
     )
     begin {
-        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
     }
@@ -588,7 +588,7 @@ function New-AutomationVariable {
         [switch]$Encrypted
     )
     begin {
-        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
     }
@@ -642,7 +642,7 @@ function Set-AutomationVariable {
         [object]$Value
     )
     begin {
-        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
     }
@@ -679,7 +679,7 @@ function Remove-AutomationVariable {
         [string]$Name
     )
     begin {
-        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
     }
@@ -725,7 +725,7 @@ function Wait-AutomationJob {
     )
 
     begin {
-        if (-not (Ensure-AzAutomationContext -AutoConnect)) {
+        if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
 

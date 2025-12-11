@@ -62,4 +62,6 @@ function Show-AdminAliases {
 Set-Alias lsa Show-AdminLs
 Set-Alias lsf Show-AdminAliases
 
-Export-ModuleMember -Function Show-AdminLs, Show-AdminAliases -Alias lsa, lsf
+#Export-ModuleMember -Function Show-AdminLs, Show-AdminAliases -Alias lsa, lsf
+Export-ModuleMember -Function * -Alias *
+

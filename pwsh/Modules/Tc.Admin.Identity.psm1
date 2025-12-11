@@ -1,4 +1,5 @@
-#requires -Modules Microsoft.Graph.Authentication, Microsoft.Graph.Users, Microsoft.Graph.Groups
+#requires -Modules Microsoft.Graph.Users
+
 function Get-UserGroupMembership {
     <#
     .SYNOPSIS
@@ -22,7 +23,7 @@ function Get-UserGroupMembership {
         [string]$UserPrincipalName
     )
     begin {
-        if (-not (Ensure-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.Read.All' -AutoConnect)) {
+        if (-not (Test-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.Read.All' -AutoConnect)) {
             return
         }
     }
@@ -68,7 +69,7 @@ function Add-UserToGroup {
         [string]$GroupIdentifier
     )
     begin {
-        if (-not (Ensure-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.ReadWrite.All' -AutoConnect)) {
+        if (-not (Test-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.ReadWrite.All' -AutoConnect)) {
             return
         }
     }
@@ -140,7 +141,7 @@ function Remove-UserFromGroup {
         [string]$GroupIdentifier
     )
     begin {
-        if (-not (Ensure-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.ReadWrite.All' -AutoConnect)) {
+        if (-not (Test-MgGraphContext -Scopes 'User.Read.All', 'GroupMember.ReadWrite.All' -AutoConnect)) {
             return
         }
     }

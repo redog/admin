@@ -1,4 +1,4 @@
-#requires -Modules Microsoft.Graph.Authentication, Microsoft.Graph.DeviceManagement
+#requires -Modules Microsoft.Graph.DeviceManagement
 
 function Get-AutopilotDevice {
     <#
@@ -17,7 +17,7 @@ function Get-AutopilotDevice {
     [CmdletBinding()]
     param()
     begin {
-        if (-not (Ensure-MgGraphContext -Scopes 'DeviceManagementServiceConfig.Read.All' -AutoConnect)) {
+        if (-not (Test-MgGraphContext -Scopes 'DeviceManagementServiceConfig.Read.All' -AutoConnect)) {
             return
         }
     }
@@ -63,7 +63,7 @@ function Set-AutopilotDeviceUser {
         [string]$UserPrincipalName
     )
     begin {
-        if (-not (Ensure-MgGraphContext -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -AutoConnect)) {
+        if (-not (Test-MgGraphContext -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -AutoConnect)) {
             return
         }
     }
@@ -104,7 +104,7 @@ function Remove-AutopilotDeviceUser {
         [string]$DeviceId
     )
     begin {
-        if (-not (Ensure-MgGraphContext -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -AutoConnect)) {
+        if (-not (Test-MgGraphContext -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -AutoConnect)) {
             return
         }
     }

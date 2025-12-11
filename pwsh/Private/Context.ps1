@@ -1,4 +1,4 @@
-function Ensure-AzAutomationContext {
+function Test-AzAutomationContext {
     param (
         [switch]$AutoConnect
     )
@@ -23,7 +23,7 @@ function Ensure-AzAutomationContext {
     }
 }
 
-function Ensure-MgGraphContext {
+function Test-MgGraphContext {
     param (
         [string[]]$Scopes,
         [switch]$AutoConnect
