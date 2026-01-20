@@ -265,7 +265,7 @@ function Get-BwSshKey {
         }
 
         # Save private key
-        Set-Content -Path $keyPath -Value $privateKey -NoNewline -Encoding UTF8
+        [System.IO.File]::WriteAllText($keyPath, $privateKey)
         Set-PrivateKeyPermissions -FilePath $keyPath
         Write-Host "Private key '$KeyNameToGet' saved to '$keyPath'"
 
