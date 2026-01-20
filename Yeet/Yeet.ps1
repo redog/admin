@@ -11,12 +11,16 @@ storing them securely in Bitwarden. It interacts with the 'bw' command-line tool
 
 .PARAMETER Command
 Specifies the action to perform:
-- list:   List available SSH keys stored in Bitwarden, showing expiration status.
+- list:   List available SSH keys stored in Bitwarden.
 - get:    Retrieve a specific SSH key by name, save it locally, and optionally add the public key to authorized_keys.
 - create: Generate a new SSH key pair, save it locally, upload it to Bitwarden, and optionally add the public key to authorized_keys.
+- upload: Upload an existing local SSH key file to Bitwarden.
 
-.PARAMETER KeyName
-The name of the SSH key to 'get'. Required when Command is 'get'.
+.PARAMETER KeyNameOrPath
+The name of the SSH key to 'get', or the local file path of the key to 'upload'.
+
+.PARAMETER TargetName
+The name to assign to the key in Bitwarden. Required when Command is 'upload'.
 
 .EXAMPLE
 .\Yeet.ps1 list
@@ -32,6 +36,10 @@ and prompts to add the public key to ~/.ssh/authorized_keys.
 Prompts for a key name, generates a new ed25519 key pair, saves it locally,
 uploads it to Bitwarden, and prompts to add the public key to ~/.ssh/authorized_keys.
 
+.EXAMPLE
+.\Yeet.ps1 upload "C:\Users\Me\.ssh\id_rsa" "my-uploaded-key"
+Uploads the local private key "C:\Users\Me\.ssh\id_rsa" (and its public key if found) to Bitwarden with the name "my-uploaded-key".
+
 .NOTES
 - I've only briefly tested this in a lab.
 - Was created by gemini with a prompt "convert this to powershell" and feeding it the source of yeet.sh. 
@@ -40,15 +48,17 @@ uploads it to Bitwarden, and prompts to add the public key to ~/.ssh/authorized_
 - Assumes the Bitwarden CLI is already logged in and unlocked when running commands other than checking the status itself.
 - Permissions for created/retrieved key files are set to grant the current user Full Control and remove inheritance on Windows.
   This approximates the intent of 'chmod 600' but is platform-specific.
-- The 'Get-ExpirationInput' function is defined but not currently used by the 'create' command flow in this version.
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('list', 'get', 'create')]
+    [ValidateSet('list', 'get', 'create', 'upload')]
     [string]$Command,
 
     [Parameter(Position = 1)]
-    [string]$KeyName
+    [string]$KeyNameOrPath,
+
+    [Parameter(Position = 2)]
+    [string]$TargetName
 )
 
 # --- Helper Functions ---
@@ -127,72 +137,12 @@ function Get-BwSshKeyList {
 
         foreach ($key in $sshKeys) {
             $keyName = $key.name
-            $expires = $key.sshKey.metadata.expires
-
-            if (-not [string]::IsNullOrEmpty($expires)) {
-                try {
-                    # Attempt to parse the date string
-                    $expiryDate = [datetimeoffset]::Parse($expires).UtcDateTime # Use DateTimeOffset for robustness, convert to UTC DateTime
-                    $today = (Get-Date).ToUniversalTime().Date # Compare dates only, in UTC
-                    $timeSpan = New-TimeSpan -Start $today -End $expiryDate.Date
-                    $daysLeft = [Math]::Floor($timeSpan.TotalDays)
-
-                    if ($daysLeft -lt 0) {
-                        Write-Host "$keyName (EXPIRED $(-$daysLeft) days ago)" -ForegroundColor Red
-                    }
-                    elseif ($daysLeft -eq 0) {
-                        Write-Host "$keyName (Expires TODAY)" -ForegroundColor Yellow
-                    }
-                    else {
-                        Write-Host "$keyName (Expires in $daysLeft days)"
-                    }
-                }
-                catch {
-                    Write-Host "$keyName (Invalid expiration date format: '$expires')" -ForegroundColor Magenta
-                }
-            }
-            else {
-                Write-Host "$keyName (No expiration)"
-            }
+            Write-Host "$keyName"
         }
     }
     catch {
         Write-Error "Failed to list or parse Bitwarden items. Error: $($_.Exception.Message)"
         exit 1
-    }
-}
-
-# Get user input for expiration (Defined, but not used in create flow below)
-function Get-ExpirationInput {
-    while ($true) {
-        Write-Host "Set key expiration:"
-        Write-Host "1) 365 days (default)"
-        Write-Host "2) Custom days"
-        Write-Host "3) Never expire"
-        $exp_choice = Read-Host -Prompt "Choose option [1-3]"
-
-        switch ($exp_choice) {
-            { $_ -eq '' -or $_ -eq '1' } {
-                return (Get-Date).AddDays(365).ToString('yyyy-MM-dd')
-            }
-            '2' {
-                while ($true) {
-                    $days = Read-Host -Prompt "Enter number of days (1-3650)"
-                    if ($days -match '^\d+$' -and [int]$days -ge 1 -and [int]$days -le 3650) {
-                        return (Get-Date).AddDays([int]$days).ToString('yyyy-MM-dd')
-                    }
-                    else {
-                        Write-Warning "Please enter a valid number between 1 and 3650"
-                    }
-                }
-            }
-            '3' {
-                return $null # Represent no expiration as null or empty string
-            }
-            default {
-                Write-Warning "Invalid option, please try again"
-            }
-        }
     }
 }
 
@@ -232,31 +182,10 @@ function Get-BwSshKey {
 
         $privateKey = $fullItem.sshKey.privateKey
         $publicKey = $fullItem.sshKey.publicKey
-        $expires = $fullItem.sshKey.metadata.expires
 
         if ([string]::IsNullOrEmpty($privateKey) -or [string]::IsNullOrEmpty($publicKey)) {
             Write-Error "Could not retrieve the private or public key content from Bitwarden item '$KeyNameToGet'."
             exit 1
-        }
-
-        # Check Expiration before saving
-         if (-not [string]::IsNullOrEmpty($expires)) {
-            try {
-                $expiryDate = [datetimeoffset]::Parse($expires).UtcDateTime
-                $today = (Get-Date).ToUniversalTime().Date
-                $timeSpan = New-TimeSpan -Start $today -End $expiryDate.Date
-                $daysLeft = [Math]::Floor($timeSpan.TotalDays)
-
-                if ($daysLeft -lt 0) {
-                    Write-Warning "This key '$KeyNameToGet' EXPIRED $(-$daysLeft) days ago!"
-                } elseif ($daysLeft -eq 0) {
-                    Write-Warning "This key '$KeyNameToGet' expires TODAY!"
-                } elseif ($daysLeft -le 30) {
-                    Write-Warning "This key '$KeyNameToGet' will expire in $daysLeft days."
-                }
-            } catch {
-                 Write-Warning "Could not parse expiration date '$expires' for key '$KeyNameToGet'."
-            }
         }
 
         $keyPath = Join-Path $sshPath $KeyNameToGet
@@ -291,6 +220,115 @@ function Get-BwSshKey {
     }
     catch {
         Write-Error "Failed during key retrieval process. Error: $($_.Exception.Message)"
+        exit 1
+    }
+}
+
+# Upload an existing SSH key to Bitwarden
+function Upload-BwSshKey {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TargetName
+    )
+
+    if (-not (Test-IsBitwardenLoggedIn)) { exit 1 }
+
+    if (-not (Test-Path $FilePath)) {
+        Write-Error "The file '$FilePath' does not exist."
+        exit 1
+    }
+
+    $fullPath = (Resolve-Path $FilePath).Path
+
+    # Determine if the provided file is public or private
+    $privateKey = ""
+    $publicKey = ""
+
+    # Simple heuristic: .pub extension
+    if ($FilePath -match '\.pub$') {
+        $publicKeyContent = Get-Content -Path $fullPath -Raw -Encoding UTF8
+        # Try to find private key (remove .pub)
+        $privateKeyPath = $FilePath -replace '\.pub$', ''
+        if (Test-Path $privateKeyPath) {
+             $privateKey = Get-Content -Path $privateKeyPath -Raw -Encoding UTF8
+             $publicKey = $publicKeyContent
+        } else {
+             Write-Error "Provided file appears to be a public key, but the corresponding private key '$privateKeyPath' was not found."
+             exit 1
+        }
+    } else {
+        # Assume it's a private key
+        $privateKey = Get-Content -Path $fullPath -Raw -Encoding UTF8
+
+        # Look for public key (.pub)
+        $publicKeyPath = "$FilePath.pub"
+        if (Test-Path $publicKeyPath) {
+            $publicKey = Get-Content -Path $publicKeyPath -Raw -Encoding UTF8
+        } else {
+            # Try to generate public key from private key
+            Write-Verbose "Public key file not found. Attempting to derive from private key..."
+            try {
+                 # ssh-keygen -y -f <private_key_file> outputs the public key to stdout
+                 $publicKey = ssh-keygen -y -f $FilePath 2>&1
+                 if ($LASTEXITCODE -ne 0) {
+                     throw "ssh-keygen failed"
+                 }
+            } catch {
+                Write-Error "Could not derive public key from '$FilePath'. Is it a valid private key? Error: $($_.Exception.Message)"
+                exit 1
+            }
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($privateKey)) {
+        Write-Error "Failed to read private key."
+        exit 1
+    }
+    if ([string]::IsNullOrWhiteSpace($publicKey)) {
+        Write-Error "Failed to read or derive public key."
+        exit 1
+    }
+
+    # Check if key with same name exists
+    try {
+        $itemsJson = bw list items --raw
+        $items = $itemsJson | ConvertFrom-Json -ErrorAction Stop
+        $existing = $items | Where-Object { $_.type -eq 5 -and $_.name -eq $TargetName }
+        if ($existing) {
+            Write-Error "A key named '$TargetName' already exists in Bitwarden."
+            exit 1
+        }
+    } catch {
+        Write-Warning "Failed to check for existing keys. Proceeding..."
+    }
+
+    # Prepare Bitwarden Item
+    Write-Verbose "Preparing item for Bitwarden..."
+    try {
+        $templateJson = bw get template item --raw
+        $itemObject = $templateJson | ConvertFrom-Json -ErrorAction Stop
+
+        $itemObject.type = 5 # SSH Key
+        $itemObject.name = $TargetName
+        $itemObject.sshKey = @{
+            privateKey = $privateKey
+            publicKey  = $publicKey
+        }
+
+        $itemJsonForBw = $itemObject | ConvertTo-Json -Depth 5 -Compress
+
+        Write-Host "Uploading key '$TargetName' to Bitwarden..."
+        $createOutput = ($itemJsonForBw | bw encode | bw create item) 2>&1
+         if ($LASTEXITCODE -ne 0 -or $createOutput -match 'Failed|Error') {
+             throw "Failed to save the key to Bitwarden. Output: $createOutput"
+        }
+        Write-Host "SSH key from '$FilePath' uploaded to Bitwarden as '$TargetName'."
+
+    } catch {
+        Write-Error "Failed during upload process. Error: $($_.Exception.Message)"
         exit 1
     }
 }
@@ -361,17 +399,8 @@ function New-BwSshKey {
             publicKey  = $publicKey
             # The fingerprint isn't strictly necessary in the template for creation
             # but can be added if desired after parsing `ssh-keygen -lf $keyPath`
-            metadata = @{} # Initialize metadata if needed (e.g., for expiration)
             # keyFingerprint = $(ssh-keygen -lf $keyPath | Select-String -Pattern 'SHA256:' | ForEach-Object { ($_ -split ' ')[1] }) # Example fingerprint parsing
         }
-
-        # ---->>> NOTE: Expiration Setting <<<----
-        # The original script defined a function Get-ExpirationInput but didn't call it here.
-        # To add expiration, uncomment and adapt the following lines:
-        # $expirationDateString = Get-ExpirationInput
-        # if (-not [string]::IsNullOrEmpty($expirationDateString)) {
-        #    $itemObject.sshKey.metadata.expires = $expirationDateString
-        # }
 
         # Convert back to JSON and encode for Bitwarden
         $itemJsonForBw = $itemObject | ConvertTo-Json -Depth 5 -Compress # Compress reduces whitespace
@@ -426,15 +455,26 @@ switch ($Command) {
         Get-BwSshKeyList
     }
     'get' {
-        if ([string]::IsNullOrWhiteSpace($KeyName)) {
-            Write-Error "The -KeyName parameter is required for the 'get' command."
+        if ([string]::IsNullOrWhiteSpace($KeyNameOrPath)) {
+            Write-Error "The -KeyNameOrPath parameter is required for the 'get' command."
             # You might want to show help here too
             exit 1
         }
-        Get-BwSshKey -KeyNameToGet $KeyName
+        Get-BwSshKey -KeyNameToGet $KeyNameOrPath
     }
     'create' {
         New-BwSshKey
+    }
+    'upload' {
+        if ([string]::IsNullOrWhiteSpace($KeyNameOrPath)) {
+            Write-Error "The -KeyNameOrPath (file path) parameter is required for the 'upload' command."
+            exit 1
+        }
+        if ([string]::IsNullOrWhiteSpace($TargetName)) {
+             Write-Error "The -TargetName parameter is required for the 'upload' command."
+             exit 1
+        }
+        Upload-BwSshKey -FilePath $KeyNameOrPath -TargetName $TargetName
     }
     default {
         # This shouldn't be reached due to ValidateSet, but good practice
