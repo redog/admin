@@ -466,15 +466,17 @@ switch ($Command) {
         New-BwSshKey
     }
     'upload' {
-        if ([string]::IsNullOrWhiteSpace($KeyNameOrPath)) {
-            Write-Error "The -KeyNameOrPath (file path) parameter is required for the 'upload' command."
-            exit 1
-        }
-        if ([string]::IsNullOrWhiteSpace($TargetName)) {
-             Write-Error "The -TargetName parameter is required for the 'upload' command."
-             exit 1
-        }
-        Upload-BwSshKey -FilePath $KeyNameOrPath -TargetName $TargetName
+        Write-Error "The upload command is vault breaking. The key some how corrupts the vault preventing it from syncing on many clients. Deleting the key doesn't fix them as it's moved to trash and still causes issues...I suspect for 30 days..."
+        exit 1
+        # if ([string]::IsNullOrWhiteSpace($KeyNameOrPath)) {
+        #     Write-Error "The -KeyNameOrPath (file path) parameter is required for the 'upload' command."
+        #     exit 1
+        # }
+        # if ([string]::IsNullOrWhiteSpace($TargetName)) {
+        #      Write-Error "The -TargetName parameter is required for the 'upload' command."
+        #      exit 1
+        # }
+        # Upload-BwSshKey -FilePath $KeyNameOrPath -TargetName $TargetName
     }
     default {
         # This shouldn't be reached due to ValidateSet, but good practice
