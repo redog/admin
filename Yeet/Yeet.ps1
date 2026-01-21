@@ -118,6 +118,36 @@ function Set-PrivateKeyPermissions {
 }
 
 
+# Get SSH Key Fingerprint
+function Get-SshFingerprint {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$KeyPath
+    )
+    try {
+        # ssh-keygen -lf output format: <bits> <fingerprint> <comment> (<type>)
+        # Example: 256 SHA256:abcd... comment (ED25519)
+        # We need the SHA256:... part
+        $output = ssh-keygen -lf $KeyPath 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Verbose "ssh-keygen -lf failed for '$KeyPath'. Output: $output"
+            return $null
+        }
+
+        # Split by whitespace and take the second element (index 1)
+        # Note: PowerShell -split operator returns array
+        $parts = $output -split '\s+'
+        if ($parts.Count -ge 2) {
+             return $parts[1]
+        }
+        return $null
+    }
+    catch {
+        Write-Warning "Could not calculate fingerprint for '$KeyPath'. Error: $($_.Exception.Message)"
+        return $null
+    }
+}
+
 # List SSH Keys from Bitwarden
 function Get-BwSshKeyList {
     if (-not (Test-IsBitwardenLoggedIn)) { exit 1 }
@@ -311,11 +341,24 @@ function Upload-BwSshKey {
         $templateJson = bw get template item --raw
         $itemObject = $templateJson | ConvertFrom-Json -ErrorAction Stop
 
+        # Determine best path for fingerprint
+        $fingerprintPath = $FilePath
+        if (-not ($fingerprintPath -match '\.pub$') -and (Test-Path "$fingerprintPath.pub")) {
+            $fingerprintPath = "$fingerprintPath.pub"
+        }
+
+        # Calculate fingerprint
+        $fingerprint = Get-SshFingerprint -KeyPath $fingerprintPath
+        if ([string]::IsNullOrWhiteSpace($fingerprint)) {
+            throw "Failed to calculate SSH key fingerprint. Aborting upload to prevent vault corruption."
+        }
+
         $itemObject.type = 5 # SSH Key
         $itemObject.name = $TargetName
         $itemObject.sshKey = @{
             privateKey = $privateKey
             publicKey  = $publicKey
+            keyFingerprint = $fingerprint
         }
 
         $itemJsonForBw = $itemObject | ConvertTo-Json -Depth 5 -Compress
@@ -391,15 +434,19 @@ function New-BwSshKey {
         $templateJson = bw get template item --raw
         $itemObject = $templateJson | ConvertFrom-Json -ErrorAction Stop
 
+        # Calculate fingerprint
+        $fingerprint = Get-SshFingerprint -KeyPath $keyPathPub
+        if ([string]::IsNullOrWhiteSpace($fingerprint)) {
+            throw "Failed to calculate SSH key fingerprint. Aborting upload to prevent vault corruption."
+        }
+
         # Populate template
         $itemObject.type = 5 # SSH Key type
         $itemObject.name = $keyNameToCreate
         $itemObject.sshKey = @{
             privateKey = $privateKey
             publicKey  = $publicKey
-            # The fingerprint isn't strictly necessary in the template for creation
-            # but can be added if desired after parsing `ssh-keygen -lf $keyPath`
-            # keyFingerprint = $(ssh-keygen -lf $keyPath | Select-String -Pattern 'SHA256:' | ForEach-Object { ($_ -split ' ')[1] }) # Example fingerprint parsing
+            keyFingerprint = $fingerprint
         }
 
         # Convert back to JSON and encode for Bitwarden
