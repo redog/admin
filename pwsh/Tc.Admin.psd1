@@ -8,6 +8,19 @@
   Description = 'Opinionated admin toolkit (Azure, Graph, Intune, Autopilot).'
   PowerShellVersion = '7.0'
 
+  NestedModules = @(
+    'Modules/Tc.Admin.Automation.psm1',
+    'Modules/Tc.Admin.Autopilot.psm1',
+    'Modules/Tc.Admin.Azure.psm1',
+    'Modules/Tc.Admin.Identity.psm1',
+    'Modules/Tc.Admin.Intune.psm1'
+  )
+
+  FunctionsToExport = '*'
+  CmdletsToExport = '*'
+  VariablesToExport = '*'
+  AliasesToExport = '*'
+
   PrivateData = @{
     PSData = @{
         Tags = @('admin', 'azure', 'intune', 'autopilot', 'graph')

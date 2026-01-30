@@ -15,28 +15,73 @@ function Get-AutopilotDevice {
         Lists all Autopilot devices in the tenant.
 #>
     [CmdletBinding()]
-    param()
+    param(
+        [string]$SerialNumber
+    )
     begin {
         if (-not (Test-MgGraphContext -Scopes 'DeviceManagementServiceConfig.Read.All' -AutoConnect)) {
             return
         }
     }
-    process {
-        try {
-            Write-Verbose "Fetching all Autopilot device identities."
-            $devices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity -All -ErrorAction Stop
-            if ($null -eq $devices) {
-                Write-Verbose "No Autopilot devices found."
-                return
+            process {
+                try {
+                    Write-Verbose "Fetching Autopilot device identities."
+                    $params = @{ All = $true }
+                    # Use contains for API stability, then client-side filter for exactness if needed
+                    if ($SerialNumber) { 
+                        $params.Filter = "contains(serialNumber, '$SerialNumber')" 
+                    }
+                    
+                    $devices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity @params -ErrorAction Stop
+                    
+                    if ($SerialNumber) {
+                        $devices = $devices | Where-Object { $_.SerialNumber -eq $SerialNumber }
+                    }
+        
+                    if ($null -eq $devices) {
+                        Write-Verbose "No Autopilot devices found."
+                        return
+                    }
+                    $devices | Select-Object Id, GroupTag, SerialNumber, UserPrincipalName, EnrollmentState, LastContactedDateTime | Write-Output
+                }
+                catch {
+        
+                Write-Error "An error occurred while fetching Autopilot devices: $($_.Exception.Message)"
             }
-            $devices | Select-Object Id, GroupTag, SerialNumber, UserPrincipalName | Write-Output
-        }
-        catch {
-            Write-Error "An error occurred while fetching Autopilot devices: $($_.Exception.Message)"
         }
     }
-}
-function Set-AutopilotDeviceUser {
+    
+    function Remove-AutopilotDevice {
+        <#
+        .SYNOPSIS
+            Removes a registered Windows Autopilot device. Aliased as 'rmapd'.
+        #>
+        [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+        param(
+            [Parameter(Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
+            [Alias('Id')]
+            [string]$DeviceId
+        )
+        begin {
+            if (-not (Test-MgGraphContext -Scopes 'DeviceManagementServiceConfig.ReadWrite.All' -AutoConnect)) {
+                return
+            }
+        }
+        process {
+            if ($PSCmdlet.ShouldProcess("device ID '$DeviceId'", "Remove Autopilot Registration")) {
+                try {
+                    Remove-MgDeviceManagementWindowsAutopilotDeviceIdentity -WindowsAutopilotDeviceIdentityId $DeviceId -ErrorAction Stop
+                    Write-Host "Successfully removed Autopilot device." -ForegroundColor Green
+                }
+                catch {
+                    Write-Error "Failed to remove device: $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+    
+    function Set-AutopilotDeviceUser {
+    
     <#
     .SYNOPSIS
         Assigns a user to an Autopilot device. Aliased as 'assignapusr'.
@@ -125,7 +170,7 @@ function Remove-AutopilotDeviceUser {
 
 
 Export-ModuleMember -Function `
-    Get-AutopilotDevice, Set-AutopilotDeviceUser, Remove-AutopilotDeviceUser `
+    Get-AutopilotDevice, Set-AutopilotDeviceUser, Remove-AutopilotDeviceUser, Remove-AutopilotDevice `
   -Alias `
-    lsap, assignapusr, rmapuser
+    lsap, assignapusr, rmapuser, rmapd
 
