@@ -38,46 +38,62 @@ function Get-AutomationRunbookInfo {
         [switch]$Parameters
     )
 
-    begin {
+	    begin {
         # Check for Azure connection
         if (-not (Test-AzAutomationContext -AutoConnect)) {
             return
         }
-        # Check if config is set
-        if ([string]::IsNullOrWhiteSpace($Script:AutomationAccountName) -or $Script:AutomationAccountName -eq "YourAutomationAccountName") {
-            Write-Error "Configuration needed. Please set `$Script:AutomationAccountName and `$Script:AutomationResourceGroupName in the script file."
-            return # Stop processing
+
+        # Check Environment Variables if Script variables are missing
+        $account = if (![string]::IsNullOrWhiteSpace($Script:AutomationAccountName)) {
+            $Script:AutomationAccountName
+        } else {
+            $env:AutomationAccountName
+        }
+
+        $rg = if (![string]::IsNullOrWhiteSpace($Script:AutomationResourceGroupName)) {
+            $Script:AutomationResourceGroupName
+        } else {
+            $env:AutomationResourceGroupName
+        }
+
+        # Validate configuration
+        if ([string]::IsNullOrWhiteSpace($account) -or [string]::IsNullOrWhiteSpace($rg)) {
+            Write-Error "Configuration needed. Please set `$env:AutomationAccountName and `$env:AutomationResourceGroupName in your profile, or `$Script: variables in the module."
+            return
         }
     }
 
     process {
         try {
+            $params = @{
+                ResourceGroupName     = $rg
+                AutomationAccountName = $account
+            }
+
             if ($PSCmdlet.ParameterSetName -eq 'List') {
-                # List all runbooks
-                Get-AzAutomationRunbook -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName |
+                Get-AzAutomationRunbook @params |
                     Select-Object Name, State, LastModifiedTime, CreationTime
             }
             elseif ($Parameters.IsPresent) {
-                # Display parameters for a specific runbook
                 Write-Verbose "Retrieving parameters for runbook '$Name'."
-                $runbook = Get-AzAutomationRunbook -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -Name $Name -ErrorAction Stop
+                $runbook = Get-AzAutomationRunbook @params -Name $Name -ErrorAction Stop
                 if ($runbook.Parameters.Count -eq 0) {
                     Write-Verbose "No parameters found for runbook '$Name'."
                 }
                 else {
                     $runbook.Parameters.GetEnumerator() | ForEach-Object {
                         [PSCustomObject]@{
-                            Name        = $_.Name
-                            Type        = $_.Value.Type
-                            Mandatory   = $_.Value.IsMandatory
-                            Default     = $_.Value.DefaultValue
+                            Name      = $_.Name
+                            Type      = $_.Value.Type
+                            Mandatory = $_.Value.IsMandatory
+                            Default   = $_.Value.DefaultValue
                         }
                     } | Write-Output
                 }
             }
             else {
-                # Get details for a specific runbook
-                Get-AzAutomationRunbook -ResourceGroupName $Script:AutomationResourceGroupName -AutomationAccountName $Script:AutomationAccountName -Name $Name
+                Get-AzAutomationRunbook @params -Name $Name
             }
         }
         catch {
