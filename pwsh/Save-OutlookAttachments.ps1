@@ -4,11 +4,9 @@ function Save-OutlookAttachments {
         [Parameter(Mandatory)]
         [string]$FolderPath,
 
-        [Parameter(Mandatory)]
         [string]$Sender,
 
-        [Parameter(Mandatory)]
-        [string]$Subject,
+        [string]$SubjectContains,
 
         [Parameter(Mandatory)]
         [string]$OutputPath,
@@ -157,13 +155,13 @@ function Save-OutlookAttachments {
     $folderId = Resolve-MailFolderPath -Path $FolderPath
     $encodedFolderId = [uri]::EscapeDataString($folderId)
 
-    $escapedSender = $Sender.Replace("'", "''")
-    $escapedSubject = $Subject.Replace("'", "''")
-
     $filters = [System.Collections.Generic.List[string]]::new()
-    $filters.Add("from/emailAddress/address eq '$escapedSender'")
-    $filters.Add("subject eq '$escapedSubject'")
     $filters.Add('hasAttachments eq true')
+
+    if (-not [string]::IsNullOrWhiteSpace($Sender)) {
+        $escapedSender = $Sender.Replace("'", "''")
+        $filters.Add("from/emailAddress/address eq '$escapedSender'")
+    }
 
     if ($PSBoundParameters.ContainsKey('ReceivedAfter')) {
         $dateString = $ReceivedAfter.ToUniversalTime().ToString(
@@ -183,12 +181,23 @@ function Save-OutlookAttachments {
         "&`$filter=$filter"
     )
 
-    $messageCount = 0
-    $attachmentCount = 0
+    $matchedMessageCount = 0
+    $downloadedAttachmentCount = 0
 
     foreach ($message in Get-AllGraphPages -Uri $messageUri) {
-        $messageCount++
+        $messageSubject = [string]$message.subject
 
+        if (
+            -not [string]::IsNullOrWhiteSpace($SubjectContains) -and
+            $messageSubject.IndexOf(
+                $SubjectContains,
+                [StringComparison]::OrdinalIgnoreCase
+            ) -lt 0
+        ) {
+            continue
+        }
+
+        $matchedMessageCount++
         $encodedMessageId = [uri]::EscapeDataString($message.id)
 
         $attachmentUri = (
@@ -203,10 +212,7 @@ function Save-OutlookAttachments {
                 continue
             }
 
-            if (
-                $attachment.isInline -and
-                -not $IncludeInlineAttachments
-            ) {
+            if ($attachment.isInline -and -not $IncludeInlineAttachments) {
                 continue
             }
 
@@ -234,12 +240,12 @@ function Save-OutlookAttachments {
                     -Uri $downloadUri `
                     -OutputFilePath $destination
 
-                $attachmentCount++
+                $downloadedAttachmentCount++
 
                 [pscustomobject]@{
                     Received       = $received
                     Sender         = $message.from.emailAddress.address
-                    Subject        = $message.subject
+                    Subject        = $messageSubject
                     AttachmentName = $attachment.name
                     SizeBytes      = [long]$attachment.size
                     SavedAs        = $destination
@@ -248,5 +254,5 @@ function Save-OutlookAttachments {
         }
     }
 
-    Write-Verbose "Matched $messageCount messages and downloaded $attachmentCount attachments."
+    Write-Verbose "Matched $matchedMessageCount messages and downloaded $downloadedAttachmentCount attachments."
 }
